@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Making your first Phaser 3 Game - Part 10</title>
+  <script src="//cdn.jsdelivr.net/npm/phaser@3.11.0/dist/phaser.js"></script>
+  <style type="text/css">
+    body {
+      margin: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <script type="text/javascript">
+    var config = {
+      type: Phaser.AUTO,
+      width: 2048,
+      height: 1024,
+      physics: {
+        default: "arcade",
+        arcade: {
+          gravity: {y: 300},
+          debug: false,
+        },
+      },
+      scene: {
+        preload: preload,
+        create: create,
+        update: update,
+      },
+    };
+
+    var player;
+    var player2;
+    var platforms;
+    var cursors;
+    var keys;
+    var gameOver = false;
+    var attackCooldown = 1000; // Cooldown duration in milliseconds
+    var dashCooldown = 2000; // Cooldown duration in milliseconds for dash
+    var dashDistance = 600; // Distance to dash
+    var dashDuration = 200; // Duration of dash animation
+
+    var game = new Phaser.Game(config);
+
+    function preload() {
+      // Load assets here
+      this.load.audio("backgroundMusic", "assets/sounds/backgroundMusic.mp3");
+      this.load.audio("jumpSound1", "assets/sounds/jump1.wav");
+      this.load.audio("jumpSound2", "assets/sounds/jump2.wav");
+      this.load.audio("jumpSound3", "assets/sounds/jump3.wav");
+      this.load.audio("attackSound1", "assets/sounds/attack1.wav");
+      this.load.audio("attackSound2", "assets/sounds/attack2.wav");
+      this.load.audio("attackSound3", "assets/sounds/attack3.wav");
+      this.load.image("wald", "assets/Wald/Wald1.png");
+      this.load.image("wald1", "assets/Wald/Wald2.png");
+      this.load.image("wald2", "assets/Wald/Wald3.png");
+      this.load.image("ground", "assets/platformWald.png");
+      this.load.image("mainGround", "assets/bodenWald.png");
+      this.load.spritesheet("dude", "assets/Idle.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeLeft", "assets/IdleLeft.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeRuns", "assets/Run.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeRunsLeft", "assets/RunLeft.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeJumps", "assets/Jump.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeFalls", "assets/Fall.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeJumpsLeft", "assets/JumpLeft.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("attack1", "assets/Attack1.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("attack2", "assets/Attack2.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("attack3", "assets/Attack3.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+    }
+
+    function create() {
+      // Background and camera setup
+      var music = this.sound.add("backgroundMusic", {
+        volume: 0.3,
+        loop: true,
+      });
+      music.play();
+
+      var backgroundFar = this.add.tileSprite(0, 0, 4000, 1024, "wald");
+      backgroundFar.setScale(0.7).setOrigin(0, 0);
+      backgroundFar.setScrollFactor(0.5);
+
+      var backgroundMid = this.add.tileSprite(0, 0, 4000, 1024, "wald1");
+      backgroundMid.setScale(0.7).setOrigin(0, 0);
+      backgroundMid.setScrollFactor(0.75);
+
+      var backgroundNear = this.add.tileSprite(0, 0, 4500, 1024, "wald2");
+      backgroundNear.setScale(0.7).setOrigin(0, 0);
+      backgroundNear.setScrollFactor(1);
+
+      this.physics.world.setBounds(0, 0, 4000, 1024);
+
+      // Create platforms
+      platforms = this.physics.add.staticGroup();
+
+      platforms.create(0, 750, "ground").setScale(0.5).refreshBody();
+      platforms.create(400, 750, "ground").setScale(0.5).refreshBody();
+      platforms.create(800, 750, "ground").setScale(0.5).refreshBody();
+      platforms.create(1200, 750, "ground").setScale(0.5).refreshBody();
+      platforms.create(1600, 750, "ground").setScale(0.5).refreshBody();
+      platforms.create(2000, 750, "ground").setScale(0.5).refreshBody();
+      platforms.create(2400, 750, "ground").setScale(0.5).refreshBody();
+      platforms.create(2800, 750, "ground").setScale(0.5).refreshBody();
+      platforms.create(3200, 750, "ground").setScale(0.5).refreshBody();
+      platforms.create(3600, 750, "ground").setScale(0.5).refreshBody();
+      platforms.create(4000, 750, "ground").setScale(0.5).refreshBody();
+
+      // Create player 1
+      player = this.physics.add.sprite(90, 0, "dude").setScale(1.5);
+      player.setBounce(0);
+      player.setCollideWorldBounds(true);
+      player.health = 100;
+      player.doubleJump = true;
+      player.airAttack = false;
+      player.setOrigin(0.5, 0.5);
+      player.attackIndex = 1;
+      player.lastAttackTime = 0;
+      player.lastDashTime = 0;
+      player.isDashing = false;
+      const hitboxWidth = 30;
+      const hitboxHeight = 60;
+      const offsetX = player.width / 2 - hitboxWidth / 2;
+      const offsetY = player.height / 2 - hitboxHeight / 2;
+      player.body.setSize(hitboxWidth, hitboxHeight);
+      player.body.setOffset(offsetX, offsetY + 20);
+
+      this.cameras.main.startFollow(player, true);
+      this.cameras.main.setBounds(0, 0, 4000, 600);
+      this.cameras.main.setLerp(0.1, 0.1);
+
+      player.healthText = this.add.text(16, 16, "Health: 100", {
+        fontSize: "32px",
+        fill: "#ffffff",
+      });
+      player.healthText.setScrollFactor(0);
+
+      // Create player 2
+      player2 = this.physics.add.sprite(900, 0, "dude").setScale(1.5);
+      player2.setBounce(0);
+      player2.setCollideWorldBounds(true);
+      player2.health = 100;
+      player2.doubleJump = true;
+      player2.airAttack = false;
+      player2.setOrigin(0.5, 0.5);
+      player2.attackIndex = 1;
+      player2.lastAttackTime = 0;
+      player2.lastDashTime = 0;
+      player2.isDashing = false;
+      player2.body.setSize(hitboxWidth, hitboxHeight);
+      player2.body.setOffset(offsetX, offsetY + 20);
+
+      player2.healthText = this.add.text(16, 64, "Health: 100", {
+        fontSize: "32px",
+        fill: "#ffffff",
+      });
+      player2.healthText.setScrollFactor(0);
+
+      // Set up animations
+      this.anims.create({
+        key: "left",
+        frames: this.anims.generateFrameNumbers("dudeRunsLeft", {
+          start: 0,
+          end: 8,
+        }),
+        frameRate: 17,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "right",
+        frames: this.anims.generateFrameNumbers("dudeRuns", {
+          start: 0,
+          end: 8,
+        }),
+        frameRate: 17,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "turnLeft",
+        frames: this.anims.generateFrameNumbers("dudeLeft", {
+          start: 0,
+          end: 8,
+        }),
+        frameRate: 20,
+      });
+
+      this.anims.create({
+        key: "turn",
+        frames: this.anims.generateFrameNumbers("dude", {start: 0, end: 8}),
+        frameRate: 20,
+      });
+
+      this.anims.create({
+        key: "jump",
+        frames: this.anims.generateFrameNumbers("dudeJumps", {}),
+        frameRate: 10,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "jumpLeft",
+        frames: this.anims.generateFrameNumbers("dudeJumpsLeft", {}),
+        frameRate: 10,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "fall",
+        frames: this.anims.generateFrameNumbers("dudeFalls", {}),
+        frameRate: 10,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "attack1",
+        frames: this.anims.generateFrameNumbers("attack1", {
+          start: 0,
+          end: 4,
+        }),
+        frameRate: 10,
+        repeat: 0,
+      });
+
+      this.anims.create({
+        key: "attack2",
+        frames: this.anims.generateFrameNumbers("attack2", {
+          start: 0,
+          end: 4,
+        }),
+        frameRate: 10,
+        repeat: 0,
+      });
+
+      this.anims.create({
+        key: "attack3",
+        frames: this.anims.generateFrameNumbers("attack3", {
+          start: 0,
+          end: 4,
+        }),
+        frameRate: 10,
+        repeat: 0,
+      });
+
+      // Set up collisions
+      this.physics.add.collider(player, platforms);
+      this.physics.add.collider(player2, platforms);
+      this.physics.add.collider(player, player2, playerCollision, null, this);
+
+      // Set up keyboard input
+      cursors = this.input.keyboard.createCursorKeys();
+      keys = {
+        W: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+        A: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
+        S: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
+        D: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+        SPACE: this.input.keyboard.addKey(
+          Phaser.Input.Keyboard.KeyCodes.SPACE,
+        ),
+        Q: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q),
+      };
+    }
+
+    function update() {
+      if (gameOver) {
+        return;
+      }
+
+      // Player 1 controls
+      handlePlayerControls(player, cursors, this, "Player 1");
+
+      // Player 2 controls
+      handlePlayerControls(
+        player2,
+        {
+          up: keys.W,
+          left: keys.A,
+          down: keys.S,
+          right: keys.D,
+          shift: keys.Q,
+          SPACE: keys.SPACE,
+        },
+        this,
+        "Player 2",
+      );
+    }
+
+    function handlePlayerControls(player, controls, scene, playerName) {
+      let justDown =
+        controls.up && Phaser.Input.Keyboard.JustDown(controls.up);
+      let currentTime = scene.time.now; // Get the current time
+
+      // Handle attack
+      if (
+        controls.SPACE &&
+        Phaser.Input.Keyboard.JustDown(controls.SPACE) &&
+        currentTime - player.lastAttackTime > attackCooldown
+      ) {
+        player.anims.play("attack" + player.attackIndex, true);
+        scene.sound.play("attackSound" + player.attackIndex);
+        player.attackIndex = (player.attackIndex % 3) + 1;
+        player.lastAttackTime = currentTime; // Update the last attack time
+        return; // Skip other controls to allow the attack animation to complete
+      }
+
+      // If an attack animation is currently playing, no other action should interrupt it
+      if (
+        player.anims.isPlaying &&
+        player.anims.getCurrentKey().includes("attack")
+      ) {
+        player.setVelocityX(0); // Optionally, stop player movement during attack
+        return; // Ensure no other movement or animation code runs until attack finishes
+      }
+
+      // Dash logic
+      if (
+        controls.left &&
+        controls.right &&
+        controls.shift &&
+        ((controls.left.isDown && controls.shift.isDown) ||
+          (controls.right.isDown && controls.shift.isDown) ||
+          (controls.shift.isDown &&
+            Phaser.Input.Keyboard.JustDown(controls.left)) ||
+          (controls.shift.isDown &&
+            Phaser.Input.Keyboard.JustDown(controls.right)))
+      ) {
+        var keyPressed = controls.left.isDown ? "left" : "right";
+
+        // Check if the dash cooldown is over
+        if (
+          currentTime - player.lastDashTime >= dashCooldown &&
+          !player.isDashing
+        ) {
+          player.isDashing = true;
+
+          // Perform dash with tween animation
+          var dashAmount =
+            keyPressed === "left" ? -dashDistance : dashDistance;
+          scene.tweens.add({
+            targets: player,
+            x: player.x + dashAmount,
+            duration: dashDuration,
+            ease: "Power1",
+            onComplete: function () {
+              player.isDashing = false;
+            },
+          });
+
+          console.log(playerName + " dash");
+          player.lastDashTime = currentTime;
+        }
+      }
+
+      // Horizontal movement and animations
+      if (controls.left.isDown) {
+        player.setVelocityX(-350);
+        if (player.body.touching.down) {
+          player.anims.play("left", true);
+          player.facingLeft = true; // Indicate that the player is facing left
+        } else if (!player.body.touching.down && player.body.velocity.y < 0) {
+          player.anims.play("jumpLeft", true);
+        }
+      } else if (controls.right.isDown) {
+        player.setVelocityX(350);
+        if (player.body.touching.down) {
+          player.anims.play("right", true);
+          player.facingLeft = false; // Indicate that the player is facing right
+        } else if (!player.body.touching.down && player.body.velocity.y < 0) {
+          player.anims.play("jump", true);
+        }
+      } else {
+        player.setVelocityX(0);
+        // Play the appropriate idle animation based on last movement
+        if (player.body.touching.down) {
+          const idleAnim = player.facingLeft ? "turnLeft" : "turn";
+          player.anims.play(idleAnim, true);
+        }
+      }
+
+      // Jumping logic
+      if (justDown && player.body.touching.down) {
+        player.setVelocityY(-330);
+        const jumpAnim = player.facingLeft ? "jumpLeft" : "jump";
+        player.anims.play(jumpAnim, true);
+        const jumpSoundIndex = Phaser.Math.Between(1, 3); // Randomly choose a jump sound index
+        scene.sound.play("jumpSound" + jumpSoundIndex);
+      } else if (
+        justDown &&
+        player.doubleJump &&
+        !player.body.touching.down
+      ) {
+        player.setVelocityY(-250);
+        const jumpAnim = player.facingLeft ? "jumpLeft" : "jump";
+        player.anims.play(jumpAnim, true);
+        const jumpSoundIndex = Phaser.Math.Between(1, 3); // Randomly choose a jump sound index
+        scene.sound.play("jumpSound" + jumpSoundIndex);
+        player.doubleJump = false; // Disable further jumps until reset
+      }
+
+      // Reset double jump on landing
+      if (player.body.touching.down) {
+        player.doubleJump = true;
+      }
+
+      // Air attack logic
+      if (
+        controls.down &&
+        controls.down.isDown &&
+        !player.body.touching.down
+      ) {
+        player.setVelocityY(400);
+        player.airAttack = true;
+      }
+
+      if (player.airAttack && player.body.touching.down) {
+        player.anims.play("attack1", true); // Play attack animation
+        scene.sound.play("attackSound1");
+        player.airAttack = false; // Reset the flag
+      }
+
+      // Handle falling animations based on vertical velocity and player's direction
+      if (!player.body.touching.down) {
+        const verticalAnim = player.body.velocity.y < 0 ? "jump" : "fall";
+        const directionalAnim = player.facingLeft
+          ? `${verticalAnim}Left`
+          : verticalAnim;
+        player.anims.play(directionalAnim, true);
+      }
+
+      // Update health text
+      player.healthText.setText("Health: " + player.health);
+    }
+
+    function playerCollision(player, player2) {
+      if (
+        player.anims.isPlaying &&
+        player.anims.getCurrentKey().includes("attack")
+      ) {
+        applyDamage(this, player2);
+      }
+      if (
+        player2.anims.isPlaying &&
+        player2.anims.getCurrentKey().includes("attack")
+      ) {
+        applyDamage(this, player);
+      }
+    }
+
+    function applyDamage(scene, player, damageAmount = 10) {
+      let currentTime = scene.time.now;
+
+      if (currentTime - player.lastHitTime < attackCooldown) {
+        return;
+      }
+
+      player.lastHitTime = currentTime;
+      player.health -= damageAmount;
+      console.log(
+        `${player.texture.key} hit! Current health: ${player.health}`,
+      );
+
+      if (player.health <= 0) {
+        player.health = 0;
+        gameOver = true;
+        console.log("Game Over!");
+
+        // Display "Player X Wins" text
+        let winnerText = scene.add.text(
+          scene.cameras.main.centerX,
+          scene.cameras.main.centerY,
+          player.texture.key === "dude" ? "Player 2 Wins!" : "Player 1 Wins!",
+          {
+            fontSize: "64px",
+            fill: "#ff0000",
+          },
+        );
+        winnerText.setOrigin(0.5);
+
+        // Stop all player movement
+        player.setVelocity(0, 0);
+        player2.setVelocity(0, 0);
+        player.body.enable = false;
+        player2.body.enable = false;
+
+        scene.physics.pause();
+      } else {
+        // Tint player red when damaged
+        player.setTint(0xff0000);
+        scene.time.delayedCall(200, () => {
+          player.clearTint();
+        });
+      }
+    }
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Making your first Phaser 3 Game - Part 10</title>
+  <script src="//cdn.jsdelivr.net/npm/phaser@3.11.0/dist/phaser.js"></script>
+  <style type="text/css">
+    body {
+      margin: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <script type="text/javascript">
+    var config = {
+      type: Phaser.AUTO,
+      width: 2048,
+      height: 1024,
+      physics: {
+        default: "arcade",
+        arcade: {
+          gravity: {y: 300},
+          debug: false,
+        },
+      },
+      scene: {
+        preload: preload,
+        create: create,
+        update: update,
+      },
+    };
+
+    var player;
+    var platforms;
+    var cursors;
+    var spaceBar;
+    var score = 0;
+    var gameOver = false;
+    var attackCooldown = 500; // Cooldown duration in milliseconds
+    var lastAttackTime = 0; // Tracks the last time an attack was made
+
+    var game = new Phaser.Game(config);
+
+    function preload() {
+      this.load.audio("backgroundMusic", "assets/sounds/backgroundMusic.mp3");
+      this.load.audio("jumpSound1", "assets/sounds/jump1.wav");
+      this.load.audio("jumpSound2", "assets/sounds/jump2.wav");
+      this.load.audio("jumpSound3", "assets/sounds/jump3.wav");
+      this.load.audio("attackSound1", "assets/sounds/attack1.wav");
+      this.load.audio("attackSound2", "assets/sounds/attack2.wav");
+      this.load.audio("attackSound3", "assets/sounds/attack3.wav");
+      this.load.image("wald", "assets/Wald/Wald1.png");
+      this.load.image("wald1", "assets/Wald/Wald2.png");
+      this.load.image("wald2", "assets/Wald/Wald3.png");
+      this.load.image("ground", "assets/platformWald.png");
+      this.load.image("mainGround", "assets/bodenWald.png");
+      this.load.spritesheet("dude", "assets/Idle.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeLeft", "assets/IdleLeft.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeRuns", "assets/Run.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeRunsLeft", "assets/RunLeft.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeJumps", "assets/Jump.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeFalls", "assets/Fall.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("dudeJumpsLeft", "assets/JumpLeft.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("attack1", "assets/Attack1.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("attack2", "assets/Attack2.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("attack3", "assets/Attack3.png", {
+        frameWidth: 160,
+        frameHeight: 111,
+      });
+      this.load.spritesheet("wolf", "assets/Wolf/WolfIdle.png", {
+        frameWidth: 64,
+        frameHeight: 64,
+      });
+      this.load.spritesheet("wolfRuns", "assets/Wolf/WolfRun.png", {
+        frameWidth: 64,
+        frameHeight: 64,
+      });
+      this.load.spritesheet("wolfBite", "assets/Wolf/WolfAttack.png", {
+        frameWidth: 64,
+        frameHeight: 64,
+      });
+      this.load.spritesheet("wolfDeath", "assets/Wolf/WolfDeath.png", {
+        frameWidth: 64,
+        frameHeight: 64,
+      });
+    }
+
+    function create() {
+      var music = this.sound.add("backgroundMusic", {
+        volume: 0.3,
+        loop: true,
+      });
+      music.play();
+      // Create a repeating background farthest from the viewer
+      var backgroundFar = this.add.tileSprite(0, 0, 4000, 1024, "wald");
+      backgroundFar.setScale(0.7).setOrigin(0, 0);
+      backgroundFar.setScrollFactor(0.5); // Moves slower than the camera
+
+      // Middle background
+      var backgroundMid = this.add.tileSprite(0, 0, 4000, 1024, "wald1");
+      backgroundMid.setScale(0.7).setOrigin(0, 0);
+      backgroundMid.setScrollFactor(0.75); // Moves faster than the far background but slower than the camera
+
+      // Nearest background
+      var backgroundNear = this.add.tileSprite(0, 0, 4500, 1024, "wald2");
+      backgroundNear.setScale(0.7).setOrigin(0, 0);
+      backgroundNear.setScrollFactor(1); // Moves with the camera
+      this.physics.world.setBounds(0, 0, 4000, 1024);
+
+      // Create static platforms
+      platforms = this.physics.add.staticGroup();
+
+      platforms.create(0, 750, "ground").setScale(0.5).refreshBody(); // Main ground
+      platforms.create(400, 750, "ground").setScale(0.5).refreshBody(); // Main ground
+      platforms.create(800, 750, "ground").setScale(0.5).refreshBody(); // Main ground
+      platforms.create(1200, 750, "ground").setScale(0.5).refreshBody(); // Main ground
+      platforms.create(1600, 750, "ground").setScale(0.5).refreshBody(); // Main ground
+      platforms.create(2000, 750, "ground").setScale(0.5).refreshBody(); // Main ground
+      platforms.create(2400, 750, "ground").setScale(0.5).refreshBody(); // Main ground
+      platforms.create(2800, 750, "ground").setScale(0.5).refreshBody(); // Main ground
+      platforms.create(3200, 750, "ground").setScale(0.5).refreshBody(); // Main ground
+      platforms.create(3600, 750, "ground").setScale(0.5).refreshBody(); // Main ground
+      platforms.create(4000, 750, "ground").setScale(0.5).refreshBody(); // Main ground
+
+      platforms.create(600, 400, "ground").setScale(0.3).refreshBody(); // Ledge
+      platforms.create(50, 250, "ground").setScale(0.3).refreshBody(); // Ledge
+      platforms.create(750, 220, "ground").setScale(0.3).refreshBody(); // Ledge
+      platforms.create(75, 520, "ground").setScale(0.3).refreshBody(); // Ledge
+
+      this.physics.world.createDebugGraphic();
+      // Player setup
+      player = this.physics.add.sprite(90, 0, "dude").setScale(1.5);
+      player.setBounce(0);
+      player.setCollideWorldBounds(true);
+
+      // Initialize player's health
+      player.health = 100;
+
+      // Double jump flag
+      player.doubleJump = true;
+
+      // Flag for air attack
+      player.airAttack = false;
+
+      // Set origin to center for easy management
+      player.setOrigin(0.5, 0.5);
+
+      // Define the new size of the desired hitbox
+      const hitboxWidth = 30; // Width remains the same
+      const hitboxHeight = 60; // New height
+
+      // Calculate offsets based on the scaled sprite size and desired hitbox dimensions
+      const offsetX = player.width / 2 - hitboxWidth / 2; // Center horizontally
+      const offsetY = player.height / 2 - hitboxHeight / 2; // Center vertically
+
+      // Camera setup to follow the player
+      this.cameras.main.startFollow(player, true);
+      this.cameras.main.setBounds(0, 0, 4000, 600); // Match the camera bounds with the world bounds
+
+      // Ensure the camera smoothly follows the player
+      this.cameras.main.setLerp(0.1, 0.1);
+
+      // Apply the hitbox size and calculated offset to the physics body
+      player.body.setSize(hitboxWidth, hitboxHeight);
+      player.body.setOffset(offsetX, offsetY + 20);
+
+      this.physics.world.createDebugGraphic();
+
+      // Optionally set visual styles if needed
+      const debugGraphics = this.add.graphics().setAlpha(0.75);
+      this.physics.world.drawDebug = false;
+      this.physics.world.debugGraphic.clear();
+      this.physics.world.debugGraphic = debugGraphics;
+
+      // Player animations
+      this.anims.create({
+        key: "left",
+        frames: this.anims.generateFrameNumbers("dudeRunsLeft", {
+          start: 0,
+          end: 8,
+        }),
+        frameRate: 17,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "right",
+        frames: this.anims.generateFrameNumbers("dudeRuns", {
+          start: 0,
+          end: 8,
+        }),
+        frameRate: 17,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "turnLeft",
+        frames: this.anims.generateFrameNumbers("dudeLeft", {
+          start: 0,
+          end: 8,
+        }),
+        frameRate: 20,
+      });
+
+      this.anims.create({
+        key: "turn",
+        frames: this.anims.generateFrameNumbers("dude", {start: 0, end: 8}),
+        frameRate: 20,
+      });
+
+      // Jump animation with repeating pattern
+      this.anims.create({
+        key: "jump",
+        frames: this.anims.generateFrameNumbers("dudeJumps", {}),
+        frameRate: 10,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "jumpLeft",
+        frames: this.anims.generateFrameNumbers("dudeJumpsLeft", {}),
+        frameRate: 10,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "fall",
+        frames: this.anims.generateFrameNumbers("dudeFalls", {}),
+        frameRate: 10,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "fallLeft",
+        frames: this.anims.generateFrameNumbers("dudeFallsLeft", {}),
+        frameRate: 10,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "attack1",
+        frames: this.anims.generateFrameNumbers("attack1", {
+          start: 0,
+          end: 4,
+        }),
+        frameRate: 10,
+        repeat: 0,
+        completeDelay: 0, // Ensures animation completes fully before being callable again
+      });
+
+      this.anims.create({
+        key: "attack2",
+        frames: this.anims.generateFrameNumbers("attack2", {
+          start: 0,
+          end: 4,
+        }),
+        frameRate: 10,
+        repeat: 0,
+        completeDelay: 0, // Ensures animation completes fully before being callable again
+      });
+
+      this.anims.create({
+        key: "attack3",
+        frames: this.anims.generateFrameNumbers("attack3", {
+          start: 0,
+          end: 4,
+        }),
+        frameRate: 10,
+        repeat: 0,
+        completeDelay: 0, // Ensures animation completes fully before being callable again
+      });
+
+      this.anims.create({
+        key: "wolf",
+        frames: this.anims.generateFrameNumbers("wolf", {
+          start: 0,
+          end: 12,
+        }),
+        frameRate: 20,
+        repeat: -1, // This will make the animation loop indefinitely
+      });
+
+      this.anims.create({
+        key: "wolfRuns",
+        frames: this.anims.generateFrameNumbers("wolfRuns", {
+          start: 0,
+          end: 8,
+        }),
+        frameRate: 17,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: "wolfAttacks",
+        frames: this.anims.generateFrameNumbers("wolfBite", {
+          // Ensure the correct sprite sheet is used
+          start: 0,
+          end: 16,
+        }),
+        frameRate: 16,
+        repeat: 0, // Make sure it does not loop
+      });
+
+      this.anims.create({
+        key: "wolfDeath",
+        frames: this.anims.generateFrameNumbers("wolfDeath", {
+          start: 0,
+          end: 18,
+        }),
+        frameRate: 5,
+        repeat: 0,
+      });
+
+      // Keyboard controls setup
+      cursors = this.input.keyboard.createCursorKeys();
+      spaceBar = this.input.keyboard.addKey(
+        Phaser.Input.Keyboard.KeyCodes.SPACE,
+      );
+      player.attackIndex = 1; // Initialize attack index
+
+      // Collectibles and hazards
+
+      // Collision and overlap checks
+      this.physics.add.collider(player, platforms);
+
+      this.enemies = this.physics.add.group({
+        key: "wolf",
+        repeat: 5,
+        setXY: {x: 400, y: 100, stepX: 200},
+      });
+
+      this.enemies.children.iterate((enemy) => {
+        enemy.isAttacking = false; // Add an attacking flag
+        enemy.lastAttackTime = 0; // Initialization
+        enemy.canTakeDamage = true; // Initialize canTakeDamage flag
+        enemy.isDying = false; // Initialize isDying flag
+
+        // Set up a single listener for attack animation completion
+        enemy.on(
+          "animationcomplete-wolfAttacks",
+          () => {
+            if (!gameOver && enemy.active && enemy.isAttacking) {
+              enemy.isAttacking = false;
+              let newVelocity = Phaser.Math.Between(-100, 100);
+              enemy.setVelocityX(newVelocity);
+              enemy.flipX = newVelocity < 0;
+              enemy.anims.play("wolfRuns", true);
+            }
+          },
+          this,
+        );
+
+        // Set up a listener for death animation completion
+        enemy.on(
+          "animationcomplete-wolfDeath",
+          function () {
+            if (enemy.health <= 0 && enemy.isDying) {
+              enemy.destroy();
+            }
+          },
+          this,
+        );
+      });
+
+      // Create animations for the enemy
+      this.anims.create({
+        key: "enemyWalk",
+        frames: this.anims.generateFrameNumbers("wolfRuns", {
+          start: 0,
+          end: 8,
+        }),
+        frameRate: 10,
+        repeat: -1,
+      });
+
+      // Initialize enemy properties and animations
+      this.enemies.children.iterate((enemy) => {
+        enemy.health = 100; // Each enemy starts with 100 HP
+        enemy.setBounce(0.2);
+        enemy.setScale(2);
+        enemy.setCollideWorldBounds(true);
+        enemy.setVelocityX(Phaser.Math.Between(-100, 100));
+        enemy.anims.play("wolf", true);
+
+        const hitboxWidth = 32; // Smaller width for the hitbox
+        const hitboxHeight = 25; // Smaller height for the hitbox
+        const offsetX = (enemy.width - hitboxWidth) / 2; // Center the hitbox horizontally
+        const offsetY = (enemy.height - hitboxHeight) / 2; // Center the hitbox vertically
+
+        enemy.body.setSize(hitboxWidth, hitboxHeight);
+        enemy.body.setOffset(offsetX, offsetY);
+      });
+
+      // Colliders and overlap
+      this.physics.add.collider(this.enemies, platforms);
+      this.physics.add.overlap(player, this.enemies, playerHit, null, this);
+    }
+
+    function applyDamage(enemy) {
+      if (!enemy || !enemy.canTakeDamage) return; // Safety check and cooldown check
+
+      console.log(`Enemy hit! Current health: ${enemy.health}`);
+      const damageAmount = 30; // Adjusted damage amount
+      enemy.health -= damageAmount; // Subtract damage from health
+      console.log(`New health: ${enemy.health}`);
+
+      if (enemy.health <= 0 && !enemy.isDying) {
+        console.log("Playing death animation.");
+        enemy.canTakeDamage = false; // Prevent further damage
+        enemy.setVelocity(0, 0); // Stop enemy movement
+        enemy.isDying = true; // Mark the enemy as dying
+
+        // Disable collision and physics for the enemy
+        enemy.body.enable = false;
+        enemy.body.checkCollision.none = true;
+
+        // Play death animation and stop further animations
+        enemy.anims.play("wolfDeath", true);
+
+        // Set up a listener for the death animation completion
+        enemy.once(
+          "animationcomplete",
+          function (animation, frame) {
+            if (animation.key === "wolfDeath") {
+              // Delay destruction of the enemy to keep the last frame visible for 2 seconds
+              this.time.delayedCall(2000, () => {
+                if (enemy && enemy.isDying) {
+                  enemy.destroy(); // Destroy enemy after delay
+                }
+              });
+            }
+          },
+          this,
+        );
+      } else {
+        enemy.canTakeDamage = false; // Set cooldown flag to false
+        enemy.setTint(0xff0000); // Temporarily tint enemy red
+
+        this.time.delayedCall(200, () => {
+          if (enemy && !enemy.isDying) {
+            enemy.clearTint(); // Remove tint after 200 milliseconds
+          }
+        });
+
+        // Reset the cooldown flag after a short delay
+        this.time.delayedCall(500, () => {
+          if (enemy && !enemy.isDying) {
+            enemy.canTakeDamage = true;
+          }
+        });
+      }
+    }
+
+    function playerHit(player, enemy) {
+      if (
+        player.anims.getCurrentKey().includes("attack") &&
+        player.anims.isPlaying
+      ) {
+        applyDamage.call(this, enemy);
+      } else {
+        // Apply damage to the player if the enemy attacks
+        applyPlayerDamage.call(this, player, 10);
+      }
+    }
+
+    function applyPlayerDamage(player, damageAmount) {
+      player.health -= damageAmount; // Subtract damage from player's health
+      console.log(`Player hit! Current health: ${player.health}`);
+
+      if (player.health <= 0) {
+        player.health = 0;
+        gameOver = true;
+        console.log("Game Over!");
+        this.physics.pause();
+        player.setTint(0xff0000);
+        player.anims.play("turn");
+
+        // Display "Game Over" text
+        let gameOverText = this.add.text(
+          this.cameras.main.centerX,
+          this.cameras.main.centerY,
+          "GAME OVER",
+          {
+            fontSize: "64px",
+            fill: "#ff0000",
+          },
+        );
+        gameOverText.setOrigin(0.5);
+
+        // Stop all player movement
+        player.setVelocity(0, 0);
+        player.body.enable = false;
+      } else {
+        // Tint player red when damaged
+        player.setTint(0xff0000);
+        this.time.delayedCall(200, () => {
+          player.clearTint();
+        });
+      }
+    }
+
+    function update() {
+      let justDown = Phaser.Input.Keyboard.JustDown(cursors.up);
+      let currentTime = this.time.now; // Get the current time
+
+      if (gameOver) {
+        return; // Stop updating if the game is over.
+      }
+
+      if (player.body.velocity.x > 0) {
+        this.cameras.main.setFollowOffset(-400, 0);
+      } else if (player.body.velocity.x < 0) {
+        this.cameras.main.setFollowOffset(-400, 0);
+      }
+
+      if (
+        Phaser.Input.Keyboard.JustDown(spaceBar) &&
+        currentTime - lastAttackTime > attackCooldown
+      ) {
+        player.anims.play("attack" + player.attackIndex, true);
+
+        // Play the respective attack sound
+        switch (player.attackIndex) {
+          case 1:
+            this.sound.play("attackSound1");
+            break;
+          case 2:
+            this.sound.play("attackSound2");
+            break;
+          case 3:
+            this.sound.play("attackSound3");
+            break;
+        }
+
+        player.attackIndex = (player.attackIndex % 3) + 1;
+
+        // Check for enemies close to the player to apply damage
+        this.enemies.getChildren().forEach((enemy) => {
+          if (
+            Phaser.Math.Distance.Between(
+              player.x,
+              player.y,
+              enemy.x,
+              enemy.y,
+            ) < 100 &&
+            enemy.canTakeDamage
+          ) {
+            applyDamage.call(this, enemy);
+          }
+        });
+
+        lastAttackTime = currentTime; // Update the last attack time
+
+        return;
+      }
+
+      if (
+        player.anims.isPlaying &&
+        player.anims.getCurrentKey().includes("attack")
+      ) {
+        player.setVelocityX(0);
+        return;
+      }
+
+      if (cursors.left.isDown) {
+        player.setVelocityX(-350);
+        if (player.body.touching.down) {
+          player.anims.play("left", true);
+          player.facingLeft = true;
+        } else if (!player.body.touching.down && player.body.velocity.y < 0) {
+          player.anims.play("jumpLeft", true);
+        }
+      } else if (cursors.right.isDown) {
+        player.setVelocityX(350);
+        if (player.body.touching.down) {
+          player.anims.play("right", true);
+          player.facingLeft = false;
+        } else if (!player.body.touching.down && player.body.velocity.y < 0) {
+          player.anims.play("jump", true);
+        }
+      } else {
+        player.setVelocityX(0);
+        if (player.body.touching.down) {
+          const idleAnim = player.facingLeft ? "turnLeft" : "turn";
+          player.anims.play(idleAnim, true);
+        }
+      }
+
+      if (player.body.touching.down) {
+        player.doubleJump = true;
+      }
+
+      if (justDown && player.body.touching.down) {
+        player.setVelocityY(-330);
+        const jumpAnim = player.facingLeft ? "jumpLeft" : "jump";
+        player.anims.play(jumpAnim, true);
+
+        // Play the respective jump sound
+        const jumpSoundIndex = Phaser.Math.Between(1, 3); // Randomly choose a jump sound index
+        this.sound.play("jumpSound" + jumpSoundIndex);
+      } else if (
+        justDown &&
+        player.doubleJump &&
+        !player.body.touching.down
+      ) {
+        player.setVelocityY(-250);
+        const jumpAnim = player.facingLeft ? "jumpLeft" : "jump";
+        player.anims.play(jumpAnim, true);
+
+        // Play the respective jump sound
+        const jumpSoundIndex = Phaser.Math.Between(1, 3); // Randomly choose a jump sound index
+        this.sound.play("jumpSound" + jumpSoundIndex);
+
+        player.doubleJump = false;
+      }
+
+      if (cursors.down.isDown && !player.body.touching.down) {
+        player.setVelocityY(400);
+        player.airAttack = true;
+      }
+
+      if (player.airAttack && player.body.touching down) {
+        player.anims.play("attack1", true);
+        this.sound.play("attackSound1");
+        player.airAttack = false;
+      }
+
+      if (!player.body.touching.down) {
+        const verticalAnim = player.body.velocity.y < 0 ? "jump" : "fall";
+        const directionalAnim = player.facingLeft
+          ? `${verticalAnim}Left`
+          : verticalAnim;
+        player.anims.play(directionalAnim, true);
+      }
+
+      // General independent movement for enemies
+
+      const handleIndependentEnemyMovement = (enemy) => {
+        if (!enemy.randomWalkTimer || enemy.randomWalkTimer < this.time.now) {
+          if (Math.random() < 0.5) {
+            enemy.setVelocityX(0);
+            enemy.anims.play("wolf", true);
+          } else {
+            let randomVelocity = Phaser.Math.Between(-100, 100);
+            enemy.setVelocityX(randomVelocity);
+            enemy.anims.play("wolfRuns", true);
+            enemy.flipX = randomVelocity > 0 ? false : true;
+          }
+          enemy.randomWalkTimer =
+            this.time.now + Phaser.Math.Between(2000, 5000);
+        }
+      };
+
+      const performAttack = (enemy) => {
+        const currentTime = this.time.now;
+        if (
+          !enemy.isAttacking &&
+          currentTime - enemy.lastAttackTime >= 1500
+        ) {
+          enemy.isAttacking = true;
+          enemy.lastAttackTime = currentTime;
+          enemy.setVelocityX(0);
+          enemy.flipX = enemy.x < player.x;
+
+          enemy.anims.play("wolfAttacks", true);
+
+          const onComplete = () => {
+            if (!gameOver && enemy.active) {
+              const newVelocity = Phaser.Math.Between(-100, 100);
+              enemy.setVelocityX(newVelocity);
+              enemy.flipX = newVelocity < 0;
+              enemy.anims.play("wolfRuns", true);
+              enemy.isAttacking = false;
+            }
+            enemy.off("animationcomplete", onComplete); // Remove the listener after it triggers
+          };
+
+          enemy.once("animationcomplete", onComplete); // Use `once` to automatically clean up the listener
+        }
+      };
+
+      this.enemies.children.iterate((enemy) => {
+        if (!enemy || !enemy.body) return; // Add check to ensure enemy is defined
+        if (Math.abs(player.y - enemy.y) > 200) {
+          handleIndependentEnemyMovement(enemy);
+        } else {
+          if (!enemy.isAttacking) {
+            let velocity = 300 * (player.x < enemy.x ? -1 : 1);
+            if (enemy && enemy.body) {
+              // Add check before accessing body properties
+              enemy.setVelocityX(velocity);
+              enemy.flipX = velocity < 0;
+              enemy.anims.play("wolfRuns", true);
+
+              if (
+                Phaser.Math.Distance.Between(
+                  player.x,
+                  player.y,
+                  enemy.x,
+                  enemy.y,
+                ) < 50
+              ) {
+                performAttack(enemy);
+                console.log("perform attack");
+                console.log(enemy.isAttacking);
+              }
+            }
+          }
+        }
+      });
+    }
+  </script>
+</body>
+
+</html>

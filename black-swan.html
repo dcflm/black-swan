@@ -1,0 +1,3026 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Phaser 3 Game with Two Levels</title>
+    <script src="//cdn.jsdelivr.net/npm/phaser@3.11.0/dist/phaser.js"></script>
+    <style type="text/css">
+      body {
+        margin: 0;
+      }
+    </style>
+  </head>
+
+  <body>
+    <script type="text/javascript">
+      var player;
+      var lastPlayerDamageTime = 0; // Tracks the last time the player was damaged
+      var isHealing = false; // Tracks if the player is currently healing
+      var healingInterval;
+      var platforms;
+      var cursors;
+      var spaceBar;
+      var score = 0;
+      var gameOver = false;
+      var attackCooldown = 500; // Cooldown duration in milliseconds
+      var lastAttackTime = 0; // Tracks the last time an attack was made
+      var playerDamageCooldown = 1000; // Cooldown duration for player damage
+      var enemiesKilled = 0; // Counter for enemies killed
+      var waves = 0; // Counter for enemies waves
+
+      // Dash system variables
+      var dashCooldown = 2000; // 2 seconds cooldown
+      var dashDistance = 300; // Distance to move during the dash
+      var dashDuration = 150; // Duration of the dash animation in milliseconds
+      var lastDashTime = 0;
+      var isDashing = false; // Flag to check if currently dashing
+
+      function shootMagic(scene, witch) {
+        // Create a graphics object for the light purple circle
+        const graphics = scene.add.graphics();
+        graphics.fillStyle(0xd8b2d1, 1); // light purple color
+        graphics.fillCircle(0, 0, 10); // radius of 10 for the ball
+
+        // Generate a texture from the graphics object
+        const textureKey = "purpleMagic";
+        graphics.generateTexture(textureKey, 20, 20); // 20x20 is the size of the texture
+        graphics.destroy(); // Remove the graphics object after generating the texture
+
+        // Create the magic projectile using the generated texture
+        const magic = scene.physics.add.image(witch.x, witch.y, textureKey);
+        magic.body.allowGravity = false; // Disable gravity for the magic projectile
+        scene.physics.add.collider(magic, platforms, (magic) =>
+          magic.destroy(),
+        );
+
+        // Calculate the direction vector from the witch to the player
+        const direction = new Phaser.Math.Vector2(
+          player.x - witch.x,
+          player.y - witch.y,
+        ).normalize();
+        magic.setVelocity(direction.x * 50, direction.y * 50); // 50 pixels per second
+
+        scene.physics.add.overlap(player, magic, (player, magic) => {
+          applyPlayerDamage.call(scene, player, 5); // Reduce damage to 5
+          magic.destroy();
+        });
+
+        // Destroy the magic projectile if it flies more than 1000 pixels
+        scene.time.delayedCall(30000, () => {
+          if (magic && magic.body) {
+            magic.destroy();
+          }
+        });
+      }
+
+      function createWitches(scene, count) {
+        for (var i = 0; i < count; i++) {
+          var cameraBounds = scene.cameras.main.worldView;
+          var x, y;
+          var side = Phaser.Math.Between(0, 1);
+          if (side === 0) {
+            x = cameraBounds.x - 100;
+          } else {
+            x = cameraBounds.x + cameraBounds.width + 100;
+          }
+        }
+        y = 450;
+
+        var witch = scene.witches.create(x, y, "witchIdle");
+
+        witch.setScale(2);
+        witch.health = 80;
+        witch.setBounce(0.2);
+        witch.setCollideWorldBounds(true);
+        witch.setVelocityX(Phaser.Math.Between(-100, 100));
+        witch.anims.play("witchIdle", true);
+
+        const hitboxWidth = 32;
+        const hitboxHeight = 50;
+        const offsetX = (witch.width - hitboxWidth) / 2;
+        const offsetY = (witch.height - hitboxHeight) / 2;
+
+        witch.body.setSize(hitboxWidth, hitboxHeight);
+        witch.body.setOffset(offsetX, offsetY - 15);
+
+        witch.isAttacking = false;
+        witch.lastAttackTime = 0;
+        witch.canTakeDamage = true;
+        witch.isDying = false;
+
+        witch.on(
+          "animationcomplete-witchAttack",
+          () => {
+            if (!gameOver && witch.active && witch.isAttacking) {
+              shootMagic(scene, witch);
+              witch.isAttacking = false;
+              let newVelocity = Phaser.Math.Between(-100, 100);
+              witch.setVelocityX(newVelocity);
+              witch.flipX = newVelocity < 0;
+              witch.anims.play("witchWalk", true);
+            }
+          },
+          scene,
+        );
+
+        witch.on(
+          "animationcomplete-witchDeath",
+          function () {
+            if (witch.health <= 0 && witch.isDying) {
+              witch.destroy();
+              enemiesKilled++;
+              if (enemiesKilled % 3 === 0) {
+                // Spawn more witches after every 3 kills
+                createWitches(scene, 3);
+              }
+            }
+          },
+          scene,
+        );
+
+        // Set a cooldown for the witch's magic attack
+        function scheduleNextAttack() {
+          scene.time.addEvent({
+            delay: Phaser.Math.Between(1000, 2500), // random delay between 2 and 4 seconds
+            callback: () => {
+              if (witch.active && !gameOver) {
+                witch.isAttacking = true;
+                witch.anims.play("witchAttack", true);
+
+                // Add a delay to shoot magic for 1 second
+                scene.time.delayedCall(5000, () => {
+                  if (witch && witch.active) {
+                    for (let sm = 0; sm < 100; sm++) {
+                      shootMagic(scene, witch);
+                    }
+                    witch.isAttacking = false;
+                    witch.anims.play("witchWalk", true);
+
+                    // Schedule the next attack
+                    scheduleNextAttack();
+                  }
+                });
+              } else {
+                // If witch is not active, reschedule the attack
+                scheduleNextAttack();
+              }
+            },
+            loop: false,
+          });
+        }
+
+        // Start the attack schedule
+        scheduleNextAttack();
+      }
+
+      function createEnemies(scene, count) {
+        let firstEnemyPlaced = false;
+
+        for (var i = 0; i < count; i++) {
+          var cameraBounds = scene.cameras.main.worldView;
+          var x, y;
+
+          if (!firstEnemyPlaced) {
+            x = cameraBounds.x + cameraBounds.width + 100;
+            firstEnemyPlaced = true;
+          } else {
+            var side = Phaser.Math.Between(0, 1);
+            if (side === 0) {
+              x = cameraBounds.x - 100;
+            } else {
+              x = cameraBounds.x + cameraBounds.width + 100;
+            }
+          }
+          y = 450;
+
+          var enemy = scene.enemies.create(x, y, "wolf");
+
+          enemy.setScale(2);
+
+          enemy.health = 100;
+          enemy.setBounce(0.2);
+          enemy.setCollideWorldBounds(true);
+          enemy.setVelocityX(Phaser.Math.Between(-100, 100));
+          enemy.anims.play("wolf", true);
+
+          const hitboxWidth = 32;
+          const hitboxHeight = 25;
+          const offsetX = (enemy.width - hitboxWidth) / 2;
+          const offsetY = (enemy.height - hitboxHeight) / 2;
+
+          enemy.body.setSize(hitboxWidth, hitboxHeight);
+          enemy.body.setOffset(offsetX, offsetY);
+
+          enemy.isAttacking = false;
+          enemy.lastAttackTime = 0;
+          enemy.canTakeDamage = true;
+          enemy.isDying = false;
+
+          enemy.on(
+            "animationcomplete-wolfAttacks",
+            () => {
+              if (!gameOver && enemy.active && enemy.isAttacking) {
+                enemy.isAttacking = false;
+                let newVelocity = Phaser.Math.Between(-100, 100);
+                enemy.setVelocityX(newVelocity);
+                enemy.flipX = newVelocity < 0;
+                enemy.anims.play("wolfRuns", true);
+              }
+            },
+            scene,
+          );
+
+          enemy.on(
+            "animationcomplete-wolfDeath",
+            function () {
+              if (enemy.health <= 0 && enemy.isDying) {
+                enemy.destroy();
+              }
+            },
+            scene,
+          );
+        }
+      }
+
+      function createBoss(scene, count) {
+        console.log("create Boss");
+        for (var i = 0; i < count; i++) {
+          var cameraBounds = scene.cameras.main.worldView;
+          var x, y;
+
+          var side = Phaser.Math.Between(0, 1);
+          if (side === 0) {
+            x = cameraBounds.x - 100;
+          } else {
+            x = cameraBounds.x + cameraBounds.width + 100;
+          }
+          y = 350;
+
+          var boss = scene.bosses.create(x, y, "wolf");
+
+          boss.setScale(3);
+
+          boss.health = 150;
+          boss.setBounce(0.2);
+          boss.setCollideWorldBounds(true);
+          boss.setVelocityX(Phaser.Math.Between(-100, 100));
+          boss.anims.play("wolf", true);
+
+          const hitboxWidth = 64;
+          const hitboxHeight = 50;
+          const offsetX = (boss.width - hitboxWidth) / 2;
+          const offsetY = (boss.height - hitboxHeight) / 2 - 12;
+
+          boss.body.setSize(hitboxWidth, hitboxHeight);
+          boss.body.setOffset(offsetX, offsetY);
+
+          boss.isAttacking = false;
+          boss.lastAttackTime = 0;
+          boss.canTakeDamage = true;
+          boss.isDying = false;
+          boss.isDestroying = false;
+          boss.isBoss = true;
+
+          // Create boss health text in the scene context
+          const bossHealthText = scene.add.text(
+            600,
+            16,
+            "Boss: " + boss.health,
+            {
+              fontSize: "32px",
+              fill: "#ffffff",
+            },
+          );
+          bossHealthText.setScrollFactor(0);
+
+          boss.update = function () {
+            if (boss.isDestroying) return; // Skip updates if the boss is being destroyed
+
+            bossHealthText.setText("Boss: " + boss.health);
+            if (boss.health <= 0 && !boss.isDying) {
+              boss.isDying = true;
+              boss.canTakeDamage = false;
+              boss.setVelocity(0, 0);
+              boss.body.enable = false;
+              boss.body.checkCollision.none = true;
+              boss.anims.play("wolfDeath", true);
+
+              boss.on("animationcomplete", () => {
+                boss.isDestroying = true; // Set the flag to true when the boss is being destroyed
+                boss.destroy();
+                bossHealthText.destroy(); // Destroy the health text
+                scene.scene.start("Level2"); // Transition to Level2 immediately
+              });
+            } else {
+              // Follow player if within range
+              const distanceToPlayer = Phaser.Math.Distance.Between(
+                player.x,
+                player.y,
+                boss.x,
+                boss.y,
+              );
+
+              if (distanceToPlayer < 300) {
+                // Follow the player
+                let velocity = 300 * (player.x < boss.x ? -1 : 1);
+                boss.setVelocityX(velocity);
+                boss.flipX = velocity < 0;
+                boss.anims.play("wolfRuns", true);
+
+                if (distanceToPlayer < 100 && !boss.isAttacking) {
+                  boss.isAttacking = true;
+                  boss.anims.play("wolfAttacks", true);
+                  boss.setVelocityX(0);
+
+                  boss.once("animationcomplete", () => {
+                    boss.isAttacking = false;
+                    if (boss.isDestroying) return; // Ensure no operations on a destroyed object
+                    let newVelocity = Phaser.Math.Between(-100, 100);
+                    boss.setVelocityX(newVelocity);
+                    boss.flipX = newVelocity < 0;
+                    boss.anims.play("wolfRuns", true);
+                  });
+                }
+              } else {
+                // Independent movement and attack behavior
+                if (
+                  !boss.randomWalkTimer ||
+                  boss.randomWalkTimer < scene.time.now
+                ) {
+                  if (Math.random() < 0.5) {
+                    boss.setVelocityX(0);
+                    boss.anims.play("wolf", true);
+                  } else {
+                    let randomVelocity = Phaser.Math.Between(-100, 100);
+                    boss.setVelocityX(randomVelocity);
+                    boss.anims.play("wolfRuns", true);
+                    boss.flipX = randomVelocity > 0 ? false : true;
+                  }
+                  boss.randomWalkTimer =
+                    scene.time.now + Phaser.Math.Between(2000, 5000);
+                }
+
+                // Attack player if close
+                if (
+                  !boss.isAttacking &&
+                  Phaser.Math.Distance.Between(
+                    player.x,
+                    player.y,
+                    boss.x,
+                    boss.y,
+                  ) < 100
+                ) {
+                  boss.isAttacking = true;
+                  boss.anims.play("wolfAttacks", true);
+                  boss.setVelocityX(0);
+
+                  boss.once("animationcomplete", () => {
+                    boss.isAttacking = false;
+                    if (boss.isDestroying) return; // Ensure no operations on a destroyed object
+                    let newVelocity = Phaser.Math.Between(-100, 100);
+                    boss.setVelocityX(newVelocity);
+                    boss.flipX = newVelocity < 0;
+                    boss.anims.play("wolfRuns", true);
+                  });
+                }
+              }
+            }
+          };
+
+          scene.bosses.add(boss); // Add boss to group
+        }
+      }
+
+      function animationExists(animKey) {
+        return this.anims.get(animKey) !== undefined;
+      }
+
+      function playerHit(player, enemy) {
+        let currentTime = this.time.now;
+
+        if (
+          currentTime - lastPlayerDamageTime > playerDamageCooldown &&
+          enemy.isAttacking
+        ) {
+          lastPlayerDamageTime = currentTime;
+
+          if (enemy.isGolem) {
+            applyPlayerDamage.call(this, player, 35); // Use applyPlayerDamage instead of applyDamage
+          } else if (enemy.isBoss) {
+            applyPlayerDamage.call(this, player, 25);
+          } else {
+            applyPlayerDamage.call(this, player, 10);
+          }
+        }
+
+        if (
+          player.anims.getCurrentKey().includes("attack") &&
+          player.anims.isPlaying
+        ) {
+          if (enemy.isBoss) {
+            applyDamage.call(this, enemy, 25);
+          } else {
+            applyDamage.call(this, enemy);
+          }
+        }
+      }
+
+      function applyPlayerDamage(player, damageAmount) {
+        player.health -= damageAmount;
+        console.log(`Player hit! Current health: ${player.health}`);
+        lastPlayerDamageTime = this.time.now;
+
+        if (player.health <= 0) {
+          player.health = 0;
+          gameOver = true;
+          console.log("Game Over!");
+          this.physics.pause();
+          player.setTint(0xff0000);
+          player.anims.play("turn");
+
+          let gameOverText = this.add.text(
+            this.cameras.main.centerX,
+            this.cameras.main.centerY,
+            "GAME OVER",
+            {
+              fontSize: "64px",
+              fill: "#ff0000",
+            },
+          );
+
+          // Center the text based on its width and height
+          gameOverText.setOrigin(0.5, 0.5);
+
+          // Make the text fixed to the camera
+          gameOverText.setScrollFactor(0);
+
+          player.setVelocity(0, 0);
+          player.body.enable = false;
+        } else {
+          player.setTint(0xff0000);
+          this.time.delayedCall(200, () => {
+            player.clearTint();
+          });
+        }
+
+        if (isHealing) {
+          clearInterval(healingInterval);
+          isHealing = false;
+        }
+      }
+
+      function playerHealing() {
+        console.log("Start healing");
+        isHealing = true;
+        healingInterval = setInterval(() => {
+          if (player.health < 80) {
+            player.health += 5;
+            player.setTint(0x4287f5);
+            this.time.delayedCall(200, () => {
+              player.clearTint();
+            });
+            console.log("healed: " + player.health);
+          } else {
+            player.health = 80;
+            clearInterval(healingInterval);
+            isHealing = false;
+            console.log("Healing complete");
+          }
+        }, 1000);
+      }
+
+      function applyDamage(enemy, damageAmount = 30) {
+        if (!enemy || !enemy.canTakeDamage) return;
+
+        console.log(`Enemy hit! Current health: ${enemy.health}`);
+        enemy.health -= damageAmount;
+        console.log(`New health: ${enemy.health}`);
+
+        if (enemy.health <= 0 && !enemy.isDying) {
+          if (enemy.isBoss) {
+            console.log("Boss defeated! Transitioning to Level2...");
+            enemy.isDying = true;
+            enemy.canTakeDamage = false;
+            enemy.setVelocity(0, 0);
+            enemy.body.enable = false;
+            enemy.body.checkCollision.none = true;
+            enemy.anims.play("wolfDeath", true);
+
+            enemy.on("animationcomplete", () => {
+              enemy.destroy();
+              this.scene.start("Level2");
+            });
+          } else {
+            console.log("Enemy defeated.");
+            enemy.canTakeDamage = false;
+            enemy.setVelocity(0, 0);
+            enemy.isDying = true;
+            enemy.body.enable = false;
+            enemy.body.checkCollision.none = true;
+            enemy.destroy();
+
+            enemiesKilled++;
+            if (waves < 3) {
+              if (enemiesKilled === 2) {
+                if (this.scene.key === "Level2") {
+                  createWitches(this, 3); // Create witches for Level 2
+                } else {
+                  createEnemies(this, 3); // Create wolves for other levels
+                }
+                waves++;
+                console.log("wave: " + waves);
+                enemiesKilled = 0;
+              }
+            } else if (waves === 3 && enemiesKilled === 2) {
+              if (this.scene.key === "Level3") {
+                this.createGolem(1);
+              } else if (this.scene.key === "Level2") {
+                createWitches(this, 1); // Create witches for Level 2
+              } else {
+                createBoss(this, 1); // Only create the boss once
+              }
+              waves++;
+            }
+          }
+        } else {
+          enemy.canTakeDamage = false;
+          enemy.setTint(0xff0000);
+
+          this.time.delayedCall(200, () => {
+            if (enemy && !enemy.isDying) {
+              enemy.clearTint();
+            }
+          });
+
+          this.time.delayedCall(500, () => {
+            if (enemy && !enemy.isDying) {
+              enemy.canTakeDamage = true;
+            }
+          });
+        }
+      }
+
+      class Level1 extends Phaser.Scene {
+        constructor() {
+          super({ key: "Level1" });
+        }
+
+        preload() {
+          this.load.audio(
+            "backgroundMusic",
+            "assets/sounds/backgroundMusic.mp3",
+          );
+          this.load.audio("jumpSound1", "assets/sounds/jump1.wav");
+          this.load.audio("jumpSound2", "assets/sounds/jump2.wav");
+          this.load.audio("jumpSound3", "assets/sounds/jump3.wav");
+          this.load.audio("attackSound1", "assets/sounds/attack1.wav");
+          this.load.audio("attackSound2", "assets/sounds/attack2.wav");
+          this.load.audio("attackSound3", "assets/sounds/attack3.wav");
+          this.load.image("wald", "assets/Wald/Wald1.png");
+          this.load.image("wald1", "assets/Wald/Wald2.png");
+          this.load.image("wald2", "assets/Wald/Wald3.png");
+          this.load.image("ground", "assets/platformWald.png");
+          this.load.image("mainGround", "assets/bodenWald.png");
+          this.load.spritesheet("dude", "assets/Idle.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeLeft", "assets/IdleLeft.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeRuns", "assets/Run.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeRunsLeft", "assets/RunLeft.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeJumps", "assets/Jump.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeFalls", "assets/Fall.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeJumpsLeft", "assets/JumpLeft.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("attack1", "assets/Attack1.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("attack2", "assets/Attack2.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("attack3", "assets/Attack3.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("wolf", "assets/Wolf/WolfIdle.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("wolfRuns", "assets/Wolf/WolfRun.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("wolfBite", "assets/Wolf/WolfAttack.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("wolfDeath", "assets/Wolf/WolfDeath.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+        }
+
+        create() {
+          var music = this.sound.add("backgroundMusic", {
+            volume: 0.3,
+            loop: true,
+          });
+          music.play();
+          var backgroundFar = this.add.tileSprite(0, 0, 10000, 1024, "wald");
+          backgroundFar.setScale(0.7).setOrigin(0, 0);
+          backgroundFar.setScrollFactor(0.5);
+
+          var backgroundMid = this.add.tileSprite(0, 0, 10000, 1024, "wald1");
+          backgroundMid.setScale(0.7).setOrigin(0, 0);
+          backgroundMid.setScrollFactor(0.75);
+
+          var backgroundNear = this.add.tileSprite(0, 0, 10000, 1024, "wald2");
+          backgroundNear.setScale(0.7).setOrigin(0, 0);
+          backgroundNear.setScrollFactor(1);
+          this.physics.world.setBounds(0, 0, 8000, 1024);
+
+          this.bosses = this.physics.add.group();
+
+          platforms = this.physics.add.staticGroup();
+
+          platforms.create(0, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(400, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(800, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(1200, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(1600, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(2000, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(2400, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(2800, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(3200, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(3600, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(4000, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(4400, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(4800, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(5200, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(5600, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(6000, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(6400, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(6800, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(7200, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(7600, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(8000, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(8400, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(8800, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(9200, 750, "ground").setScale(0.5).refreshBody();
+
+          platforms.create(75, 520, "ground").setScale(0.3).refreshBody();
+          platforms.create(600, 400, "ground").setScale(0.3).refreshBody();
+          platforms.create(1450, 300, "ground").setScale(0.3).refreshBody();
+          platforms.create(1900, 455, "ground").setScale(0.3).refreshBody();
+          platforms.create(2500, 520, "ground").setScale(0.3).refreshBody();
+
+          this.physics.world.createDebugGraphic();
+
+          player = this.physics.add.sprite(90, 600, "dude").setScale(1.5);
+          player.setBounce(0);
+          player.setCollideWorldBounds(true);
+          player.health = 100;
+          player.doubleJump = true;
+          player.airAttack = false;
+          player.setOrigin(0.5, 0.5);
+
+          const hitboxWidth = 30;
+          const hitboxHeight = 60;
+          const offsetX = player.width / 2 - hitboxWidth / 2;
+          const offsetY = player.height / 2 - hitboxHeight / 2;
+
+          this.cameras.main.startFollow(player, true);
+          this.cameras.main.setBounds(0, 0, 7600, 600);
+          this.cameras.main.setLerp(0.1, 0.1);
+
+          player.body.setSize(hitboxWidth, hitboxHeight);
+          player.body.setOffset(offsetX, offsetY + 20);
+
+          this.physics.world.createDebugGraphic();
+
+          const debugGraphics = this.add.graphics().setAlpha(0.75);
+          this.physics.world.drawDebug = false;
+          this.physics.world.debugGraphic.clear();
+          this.physics.world.debugGraphic = debugGraphics;
+
+          this.anims.create({
+            key: "left",
+            frames: this.anims.generateFrameNumbers("dudeRunsLeft", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 17,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "right",
+            frames: this.anims.generateFrameNumbers("dudeRuns", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 17,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "turnLeft",
+            frames: this.anims.generateFrameNumbers("dudeLeft", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 20,
+          });
+
+          this.anims.create({
+            key: "turn",
+            frames: this.anims.generateFrameNumbers("dude", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 20,
+          });
+
+          this.anims.create({
+            key: "jump",
+            frames: this.anims.generateFrameNumbers("dudeJumps", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "jumpLeft",
+            frames: this.anims.generateFrameNumbers("dudeJumpsLeft", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "fall",
+            frames: this.anims.generateFrameNumbers("dudeFalls", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "fallLeft",
+            frames: this.anims.generateFrameNumbers("dudeFallsLeft", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "attack1",
+            frames: this.anims.generateFrameNumbers("attack1", {
+              start: 0,
+              end: 4,
+            }),
+            frameRate: 10,
+            repeat: 0,
+            completeDelay: 0,
+          });
+
+          this.anims.create({
+            key: "attack2",
+            frames: this.anims.generateFrameNumbers("attack2", {
+              start: 0,
+              end: 4,
+            }),
+            frameRate: 10,
+            repeat: 0,
+            completeDelay: 0,
+          });
+
+          this.anims.create({
+            key: "attack3",
+            frames: this.anims.generateFrameNumbers("attack3", {
+              start: 0,
+              end: 4,
+            }),
+            frameRate: 10,
+            repeat: 0,
+            completeDelay: 0,
+          });
+
+          this.anims.create({
+            key: "wolf",
+            frames: this.anims.generateFrameNumbers("wolf", {
+              start: 0,
+              end: 12,
+            }),
+            frameRate: 20,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "wolfRuns",
+            frames: this.anims.generateFrameNumbers("wolfRuns", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 17,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "wolfAttacks",
+            frames: this.anims.generateFrameNumbers("wolfBite", {
+              start: 0,
+              end: 16,
+            }),
+            frameRate: 16,
+            repeat: 0,
+          });
+
+          this.anims.create({
+            key: "wolfDeath",
+            frames: this.anims.generateFrameNumbers("wolfDeath", {
+              start: 0,
+              end: 18,
+            }),
+            frameRate: 5,
+            repeat: 0,
+          });
+
+          cursors = this.input.keyboard.createCursorKeys();
+          spaceBar = this.input.keyboard.addKey(
+            Phaser.Input.Keyboard.KeyCodes.SPACE,
+          );
+          player.attackIndex = 1;
+
+          this.enemiesKilled = 0; // Reset enemiesKilled
+          this.waves = 0; // Reset waves
+
+          this.physics.add.collider(player, platforms);
+
+          this.bosses = this.physics.add.group();
+
+          this.enemies = this.physics.add.group();
+          createEnemies(this, 4); // Use the global createEnemies function
+
+          this.physics.add.collider(this.enemies, platforms);
+          this.physics.add.overlap(player, this.enemies, playerHit, null, this);
+
+          this.physics.add.collider(this.bosses, platforms); // Add collider for bosses
+          this.physics.add.overlap(player, this.bosses, playerHit, null, this); // Add overlap check for player and bosses
+
+          this.healthText = this.add.text(16, 16, "Health: 100", {
+            fontSize: "32px",
+            fill: "#ffffff",
+          });
+          this.healthText.setScrollFactor(0);
+        }
+
+        update() {
+          //this.scene.start("Level2");
+          this.healthText.setText("Health: " + player.health);
+          let justDown = Phaser.Input.Keyboard.JustDown(cursors.up);
+          let currentTime = this.time.now;
+
+          if (gameOver) {
+            return;
+          }
+
+          if (!isHealing && currentTime - lastPlayerDamageTime > 10000) {
+            playerHealing.call(this);
+          }
+
+          if (player.body.velocity.x > 0) {
+            this.cameras.main.setFollowOffset(-400, 0);
+          } else if (player.body.velocity.x < 0) {
+            this.cameras.main.setFollowOffset(-400, 0);
+          }
+
+          if (
+            Phaser.Input.Keyboard.JustDown(spaceBar) &&
+            currentTime - lastAttackTime > attackCooldown
+          ) {
+            player.anims.play("attack" + player.attackIndex, true);
+
+            switch (player.attackIndex) {
+              case 1:
+                this.sound.play("attackSound1");
+                break;
+              case 2:
+                this.sound.play("attackSound2");
+                break;
+              case 3:
+                this.sound.play("attackSound3");
+                break;
+            }
+
+            player.attackIndex = (player.attackIndex % 3) + 1;
+
+            this.enemies.getChildren().forEach((enemy) => {
+              if (
+                Phaser.Math.Distance.Between(
+                  player.x,
+                  player.y,
+                  enemy.x,
+                  enemy.y,
+                ) < 100 &&
+                enemy.canTakeDamage
+              ) {
+                applyDamage.call(this, enemy);
+              }
+            });
+
+            lastAttackTime = currentTime;
+
+            return;
+          }
+
+          if (
+            player.anims.isPlaying &&
+            player.anims.getCurrentKey().includes("attack")
+          ) {
+            player.setVelocityX(0);
+            return;
+          }
+
+          if (cursors.left.isDown) {
+            player.setVelocityX(-350);
+            if (player.body.touching.down) {
+              player.anims.play("left", true);
+              player.facingLeft = true;
+            } else if (
+              !player.body.touching.down &&
+              player.body.velocity.y < 0
+            ) {
+              player.anims.play("jumpLeft", true);
+            }
+          } else if (cursors.right.isDown) {
+            player.setVelocityX(350);
+            if (player.body.touching.down) {
+              player.anims.play("right", true);
+              player.facingLeft = false;
+            } else if (
+              !player.body.touching.down &&
+              player.body.velocity.y < 0
+            ) {
+              player.anims.play("jump", true);
+            }
+          } else {
+            player.setVelocityX(0);
+            if (player.body.touching.down) {
+              const idleAnim = player.facingLeft ? "turnLeft" : "turn";
+              player.anims.play(idleAnim, true);
+            }
+          }
+
+          if (player.body.touching.down) {
+            player.doubleJump = true;
+          }
+
+          if (justDown && player.body.touching.down) {
+            player.setVelocityY(-330);
+            const jumpAnim = player.facingLeft ? "jumpLeft" : "jump";
+            player.anims.play(jumpAnim, true);
+
+            const jumpSoundIndex = Phaser.Math.Between(1, 3);
+            this.sound.play("jumpSound" + jumpSoundIndex);
+          } else if (
+            justDown &&
+            player.doubleJump &&
+            !player.body.touching.down
+          ) {
+            player.setVelocityY(-250);
+            const jumpAnim = player.facingLeft ? "jumpLeft" : "jump";
+            player.anims.play(jumpAnim, true);
+
+            const jumpSoundIndex = Phaser.Math.Between(1, 3);
+            this.sound.play("jumpSound" + jumpSoundIndex);
+
+            player.doubleJump = false;
+          }
+
+          // Dash logic
+          if (
+            (cursors.left.isDown && cursors.shift.isDown) ||
+            (cursors.right.isDown && cursors.shift.isDown) ||
+            (cursors.shift.isDown &&
+              Phaser.Input.Keyboard.JustDown(cursors.left)) ||
+            (cursors.shift.isDown &&
+              Phaser.Input.Keyboard.JustDown(cursors.right))
+          ) {
+            var keyPressed = cursors.left.isDown ? "left" : "right";
+
+            // Check if the dash cooldown is over
+            if (currentTime - lastDashTime >= dashCooldown && !isDashing) {
+              isDashing = true;
+
+              // Perform dash with tween animation
+              var dashAmount =
+                keyPressed === "left" ? -dashDistance : dashDistance;
+              this.tweens.add({
+                targets: player,
+                x: player.x + dashAmount,
+                duration: dashDuration,
+                ease: "Power1",
+                onComplete: function () {
+                  isDashing = false;
+                },
+              });
+
+              console.log("dash");
+              lastDashTime = currentTime;
+            }
+          }
+
+          if (cursors.down.isDown && !player.body.touching.down) {
+            player.setVelocityY(400);
+            player.airAttack = true;
+          }
+
+          if (player.airAttack && player.body.touching.down) {
+            player.anims.play("attack1", true);
+            this.sound.play("attackSound1");
+            player.airAttack = false;
+          }
+          if (!player.body.touching.down) {
+            const verticalAnim = player.body.velocity.y < 0 ? "jump" : "fall";
+            const directionalAnim = player.facingLeft
+              ? `${verticalAnim}Left`
+              : verticalAnim;
+          }
+
+          this.enemies.children.iterate((enemy) => {
+            if (!enemy || !enemy.body) return;
+            if (Math.abs(player.y - enemy.y) > 200) {
+              this.handleIndependentEnemyMovement(enemy);
+            } else {
+              if (!enemy.isAttacking) {
+                let velocity = 300 * (player.x < enemy.x ? -1 : 1);
+                if (enemy && enemy.body) {
+                  enemy.setVelocityX(velocity);
+                  enemy.flipX = velocity < 0;
+                  enemy.anims.play("wolfRuns", true);
+
+                  if (
+                    Phaser.Math.Distance.Between(
+                      player.x,
+                      player.y,
+                      enemy.x,
+                      enemy.y,
+                    ) < 50
+                  ) {
+                    this.performAttack(enemy);
+                  }
+                }
+              }
+            }
+          });
+
+          // Call the update method for each boss
+          this.bosses.children.iterate((boss) => {
+            if (boss.update) {
+              boss.update();
+            }
+          });
+        }
+
+        handleIndependentEnemyMovement(enemy) {
+          if (!enemy.randomWalkTimer || enemy.randomWalkTimer < this.time.now) {
+            if (Math.random() < 0.5) {
+              enemy.setVelocityX(0);
+              enemy.anims.play("wolf", true);
+            } else {
+              let randomVelocity = Phaser.Math.Between(-100, 100);
+              enemy.setVelocityX(randomVelocity);
+              enemy.anims.play("wolfRuns", true);
+              enemy.flipX = randomVelocity > 0 ? false : true;
+            }
+            enemy.randomWalkTimer =
+              this.time.now + Phaser.Math.Between(2000, 5000);
+          }
+        }
+
+        performAttack(enemy) {
+          const currentTime = this.time.now;
+          if (
+            !enemy.isAttacking &&
+            currentTime - enemy.lastAttackTime >= 1500
+          ) {
+            enemy.isAttacking = true;
+            enemy.lastAttackTime = currentTime;
+            enemy.setVelocityX(0);
+            enemy.flipX = enemy.x < player.x;
+
+            enemy.anims.play("wolfAttacks", true);
+
+            const onComplete = () => {
+              if (!gameOver && enemy.active) {
+                const newVelocity = Phaser.Math.Between(-100, 100);
+                enemy.setVelocityX(newVelocity);
+                enemy.flipX = newVelocity < 0;
+                enemy.anims.play("wolfRuns", true);
+                enemy.isAttacking = false;
+              }
+              enemy.off("animationcomplete", onComplete);
+            };
+
+            enemy.once("animationcomplete", onComplete);
+          }
+        }
+
+        shutdown() {
+          // Cleanup function to remove all game objects and reset variables
+          this.enemies.clear(true, true);
+          this.witches && this.witches.clear(true, true);
+          this.bosses && this.bosses.clear(true, true);
+          this.sound.stopAll();
+          this.physics.world.colliders.destroy();
+          player.destroy();
+          platforms.clear(true, true);
+        }
+      }
+
+      class Level2 extends Phaser.Scene {
+        constructor() {
+          super({ key: "Level2" });
+          this.witchesKilled = 0; // Initialize the witches killed counter
+          this.totalWitchesToKill = 6; // Total witches needed to kill to progress
+          this.witchesPerWave = 5; // Witches per wave
+        }
+
+        preload() {
+          this.load.audio(
+            "backgroundMusic",
+            "assets/sounds/backgroundMusic.mp3",
+          );
+          this.load.audio("jumpSound1", "assets/sounds/jump1.wav");
+          this.load.audio("jumpSound2", "assets/sounds/jump2.wav");
+          this.load.audio("jumpSound3", "assets/sounds/jump3.wav");
+          this.load.audio("attackSound1", "assets/sounds/attack1.wav");
+          this.load.audio("attackSound2", "assets/sounds/attack2.wav");
+          this.load.audio("attackSound3", "assets/sounds/attack3.wav");
+          this.load.image("schnee", "assets/Schnee/Schnee1.png");
+          this.load.image("schnee1", "assets/Schnee/Schnee2.png");
+          this.load.image("schnee2", "assets/Schnee/Schnee3.png");
+          this.load.image("groundS", "assets/platformSchnee.png");
+          this.load.image("mainGround", "assets/bodenWald.png");
+          this.load.spritesheet("dude", "assets/Idle.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeLeft", "assets/IdleLeft.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeRuns", "assets/Run.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeRunsLeft", "assets/RunLeft.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeJumps", "assets/Jump.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeFalls", "assets/Fall.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeJumpsLeft", "assets/JumpLeft.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("attack1", "assets/Attack1.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("attack2", "assets/Attack2.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("attack3", "assets/Attack3.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+
+          this.load.spritesheet("witchIdle", "assets/Witch/WitchIdle.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("witchWalk", "assets/Witch/WitchWalk.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("witchAttack", "assets/Witch/WitchThrow.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("witchDeath", "assets/Witch/WitchDeath.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.image("redMagic", "assets/Effect.png", {
+            frameWidth: 47,
+            frameHeight: 14,
+          });
+        }
+
+        create() {
+          var backgroundFar = this.add.tileSprite(0, 0, 10000, 1024, "schnee");
+          backgroundFar.setScale(0.7).setOrigin(0, 0);
+          backgroundFar.setScrollFactor(0.5);
+
+          var backgroundMid = this.add.tileSprite(0, 0, 10000, 1024, "schnee1");
+          backgroundMid.setScale(0.7).setOrigin(0, 0);
+          backgroundMid.setScrollFactor(0.75);
+
+          var backgroundNear = this.add.tileSprite(
+            0,
+            0,
+            10000,
+            1024,
+            "schnee2",
+          );
+          backgroundNear.setScale(0.7).setOrigin(0, 0);
+          backgroundNear.setScrollFactor(1);
+          this.physics.world.setBounds(0, 0, 8000, 1024);
+
+          platforms = this.physics.add.staticGroup();
+
+          platforms.create(0, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(400, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(800, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(1200, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(1600, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(2000, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(2400, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(2800, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(3200, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(3600, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(4000, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(4400, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(4800, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(5200, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(5600, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(6000, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(6400, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(6800, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(7200, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(7600, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(8000, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(8400, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(8800, 750, "groundS").setScale(0.5).refreshBody();
+          platforms.create(9200, 750, "groundS").setScale(0.5).refreshBody();
+
+          platforms.create(75, 520, "groundS").setScale(0.3).refreshBody();
+          platforms.create(600, 400, "groundS").setScale(0.3).refreshBody();
+          platforms.create(1450, 300, "groundS").setScale(0.3).refreshBody();
+          platforms.create(1900, 455, "groundS").setScale(0.3).refreshBody();
+          platforms.create(2500, 520, "groundS").setScale(0.3).refreshBody();
+
+          this.physics.world.createDebugGraphic();
+
+          player = this.physics.add.sprite(90, 600, "dude").setScale(1.5);
+          player.setBounce(0);
+          player.setCollideWorldBounds(true);
+          player.health = 100;
+          player.doubleJump = true;
+          player.airAttack = false;
+          player.setOrigin(0.5, 0.5);
+
+          const hitboxWidth = 30;
+          const hitboxHeight = 60;
+          const offsetX = player.width / 2 - hitboxWidth / 2;
+          const offsetY = player.height / 2 - hitboxHeight / 2;
+
+          this.cameras.main.startFollow(player, true);
+          this.cameras.main.setBounds(0, 0, 7600, 600);
+          this.cameras.main.setLerp(0.1, 0.1);
+
+          player.body.setSize(hitboxWidth, hitboxHeight);
+          player.body.setOffset(offsetX, offsetY + 20);
+
+          this.physics.world.createDebugGraphic();
+
+          const debugGraphics = this.add.graphics().setAlpha(0.75);
+          this.physics.world.drawDebug = false;
+          this.physics.world.debugGraphic.clear();
+          this.physics.world.debugGraphic = debugGraphics;
+
+          this.anims.create({
+            key: "left",
+            frames: this.anims.generateFrameNumbers("dudeRunsLeft", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 17,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "right",
+            frames: this.anims.generateFrameNumbers("dudeRuns", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 17,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "turnLeft",
+            frames: this.anims.generateFrameNumbers("dudeLeft", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 20,
+          });
+
+          this.anims.create({
+            key: "turn",
+            frames: this.anims.generateFrameNumbers("dude", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 20,
+          });
+
+          this.anims.create({
+            key: "jump",
+            frames: this.anims.generateFrameNumbers("dudeJumps", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "jumpLeft",
+            frames: this.anims.generateFrameNumbers("dudeJumpsLeft", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "fall",
+            frames: this.anims.generateFrameNumbers("dudeFalls", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "fallLeft",
+            frames: this.anims.generateFrameNumbers("dudeFallsLeft", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "attack1",
+            frames: this.anims.generateFrameNumbers("attack1", {
+              start: 0,
+              end: 4,
+            }),
+            frameRate: 10,
+            repeat: 0,
+            completeDelay: 0,
+          });
+
+          this.anims.create({
+            key: "attack2",
+            frames: this.anims.generateFrameNumbers("attack2", {
+              start: 0,
+              end: 4,
+            }),
+            frameRate: 10,
+            repeat: 0,
+            completeDelay: 0,
+          });
+
+          this.anims.create({
+            key: "attack3",
+            frames: this.anims.generateFrameNumbers("attack3", {
+              start: 0,
+              end: 4,
+            }),
+            frameRate: 10,
+            repeat: 0,
+            completeDelay: 0,
+          });
+
+          // Define Witch animations
+          this.anims.create({
+            key: "witchIdle",
+            frames: this.anims.generateFrameNumbers("witchIdle", {
+              start: 0,
+              end: 6,
+            }),
+            frameRate: 10,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "witchWalk",
+            frames: this.anims.generateFrameNumbers("witchWalk", {
+              start: 0,
+              end: 7,
+            }),
+            frameRate: 15,
+            repeat: -1,
+          });
+
+          this.anims.create({
+            key: "witchAttack",
+            frames: this.anims.generateFrameNumbers("witchAttack", {
+              start: 0,
+              end: 17,
+            }),
+            frameRate: 10,
+            repeat: 0,
+          });
+
+          this.anims.create({
+            key: "witchDeath",
+            frames: this.anims.generateFrameNumbers("witchDeath", {
+              start: 0,
+              end: 11,
+            }),
+            frameRate: 15,
+            repeat: 0,
+          });
+
+          this.anims.create({
+            key: "redMagic",
+            frames: this.anims.generateFrameNumbers("redMagic", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 5,
+            repeat: 0,
+          });
+
+          this.time.addEvent({
+            delay: Phaser.Math.Between(1000, 2500), // random delay between 1 and 2.5 seconds
+            callback: () => {
+              this.witches.children.iterate((witch) => {
+                if (witch.active && !gameOver) {
+                  witch.isAttacking = true;
+                  witch.anims.play("witchAttack", true);
+
+                  // Add a delay to shoot magic for 1 second
+                  this.time.delayedCall(1000, () => {
+                    if (witch && witch.active) {
+                      shootMagic(this, witch);
+                      witch.isAttacking = false;
+                      witch.anims.play("witchWalk", true);
+                    }
+                  });
+                }
+              });
+            },
+            loop: true,
+          });
+
+          this.enemiesKilled = 0; // Reset enemiesKilled
+          this.waves = 0; // Reset waves
+          // Initialize Witches
+          this.witches = this.physics.add.group();
+          this.createWitches(this, this.witchesPerWave);
+
+          this.physics.add.collider(this.witches, platforms);
+          this.physics.add.overlap(player, this.witches, playerHit, null, this);
+
+          // Initialize Bosses
+          this.bosses = this.physics.add.group();
+
+          cursors = this.input.keyboard.createCursorKeys();
+          spaceBar = this.input.keyboard.addKey(
+            Phaser.Input.Keyboard.KeyCodes.SPACE,
+          );
+          player.attackIndex = 1;
+
+          this.physics.add.collider(player, platforms);
+
+          this.healthText = this.add.text(16, 16, "Health: 100", {
+            fontSize: "32px",
+            fill: "#ffffff",
+          });
+          this.healthText.setScrollFactor(0);
+        }
+
+        update() {
+          this.healthText.setText("Health: " + player.health);
+
+          let justDown = Phaser.Input.Keyboard.JustDown(cursors.up);
+          let currentTime = this.time.now;
+
+          if (gameOver) {
+            return;
+          }
+
+          if (!isHealing && currentTime - lastPlayerDamageTime > 10000) {
+            playerHealing.call(this);
+          }
+
+          if (player.body.velocity.x > 0) {
+            this.cameras.main.setFollowOffset(-400, 0);
+          } else if (player.body.velocity.x < 0) {
+            this.cameras.main.setFollowOffset(-400, 0);
+          }
+
+          if (
+            Phaser.Input.Keyboard.JustDown(spaceBar) &&
+            currentTime - lastAttackTime > attackCooldown
+          ) {
+            player.anims.play("attack" + player.attackIndex, true);
+
+            switch (player.attackIndex) {
+              case 1:
+                this.sound.play("attackSound1");
+                break;
+              case 2:
+                this.sound.play("attackSound2");
+                break;
+              case 3:
+                this.sound.play("attackSound3");
+                break;
+            }
+
+            player.attackIndex = (player.attackIndex % 3) + 1;
+
+            this.witches.getChildren().forEach((witch) => {
+              if (
+                Phaser.Math.Distance.Between(
+                  player.x,
+                  player.y,
+                  witch.x,
+                  witch.y,
+                ) < 100 &&
+                witch.canTakeDamage
+              ) {
+                this.applyDamage(witch);
+              }
+            });
+
+            lastAttackTime = currentTime;
+            return;
+          }
+
+          if (
+            player.anims.isPlaying &&
+            player.anims.getCurrentKey().includes("attack")
+          ) {
+            player.setVelocityX(0);
+            return;
+          }
+
+          if (cursors.left.isDown) {
+            player.setVelocityX(-350);
+            if (player.body.touching.down) {
+              player.anims.play("left", true);
+              player.facingLeft = true;
+            } else if (
+              !player.body.touching.down &&
+              player.body.velocity.y < 0
+            ) {
+              player.anims.play("jumpLeft", true);
+            }
+          } else if (cursors.right.isDown) {
+            player.setVelocityX(350);
+            if (player.body.touching.down) {
+              player.anims.play("right", true);
+              player.facingLeft = false;
+            } else if (
+              !player.body.touching.down &&
+              player.body.velocity.y < 0
+            ) {
+              player.anims.play("jump", true);
+            }
+          } else {
+            player.setVelocityX(0);
+            if (player.body.touching.down) {
+              const idleAnim = player.facingLeft ? "turnLeft" : "turn";
+              player.anims.play(idleAnim, true);
+            }
+          }
+
+          if (player.body.touching.down) {
+            player.doubleJump = true;
+          }
+
+          if (justDown && player.body.touching.down) {
+            player.setVelocityY(-330);
+            const jumpAnim = player.facingLeft ? "jumpLeft" : "jump";
+            player.anims.play(jumpAnim, true);
+
+            const jumpSoundIndex = Phaser.Math.Between(1, 3);
+            this.sound.play("jumpSound" + jumpSoundIndex);
+          } else if (
+            justDown &&
+            player.doubleJump &&
+            !player.body.touching.down
+          ) {
+            player.setVelocityY(-250);
+            const jumpAnim = player.facingLeft ? "jumpLeft" : "jump";
+            player.anims.play(jumpAnim, true);
+
+            const jumpSoundIndex = Phaser.Math.Between(1, 3);
+            this.sound.play("jumpSound" + jumpSoundIndex);
+
+            player.doubleJump = false;
+          }
+
+          // Dash logic
+          if (
+            (cursors.left.isDown && cursors.shift.isDown) ||
+            (cursors.right.isDown && cursors.shift.isDown) ||
+            (cursors.shift.isDown &&
+              Phaser.Input.Keyboard.JustDown(cursors.left)) ||
+            (cursors.shift.isDown &&
+              Phaser.Input.Keyboard.JustDown(cursors.right))
+          ) {
+            var keyPressed = cursors.left.isDown ? "left" : "right";
+
+            // Check if the dash cooldown is over
+            if (currentTime - lastDashTime >= dashCooldown && !isDashing) {
+              isDashing = true;
+
+              // Perform dash with tween animation
+              var dashAmount =
+                keyPressed === "left" ? -dashDistance : dashDistance;
+              this.tweens.add({
+                targets: player,
+                x: player.x + dashAmount,
+                duration: dashDuration,
+                ease: "Power1",
+                onComplete: function () {
+                  isDashing = false;
+                },
+              });
+
+              console.log("dash");
+              lastDashTime = currentTime;
+            }
+          }
+
+          if (cursors.down.isDown && !player.body.touching.down) {
+            player.setVelocityY(400);
+            player.airAttack = true;
+          }
+
+          if (player.airAttack && player.body.touching.down) {
+            player.anims.play("attack1", true);
+            this.sound.play("attackSound1");
+            player.airAttack = false;
+          }
+
+          if (!player.body.touching.down) {
+            const verticalAnim = player.body.velocity.y < 0 ? "jump" : "fall";
+            const directionalAnim = player.facingLeft
+              ? `${verticalAnim}Left`
+              : verticalAnim;
+          }
+
+          this.witches.children.iterate((witch) => {
+            if (!witch || !witch.body) return;
+
+            // Independent movement for witches
+            if (
+              !witch.randomWalkTimer ||
+              witch.randomWalkTimer < this.time.now
+            ) {
+              if (Math.random() < 0.5) {
+                witch.setVelocityX(0);
+                witch.anims.play("witchIdle", true);
+              } else {
+                let randomVelocity = Phaser.Math.Between(-100, 100);
+                witch.setVelocityX(randomVelocity);
+                witch.anims.play("witchWalk", true);
+                witch.flipX = randomVelocity < 0;
+              }
+              witch.randomWalkTimer =
+                this.time.now + Phaser.Math.Between(2000, 5000);
+            }
+          });
+
+          // Call the update method for each boss
+          this.bosses.children.iterate((boss) => {
+            if (boss.update) {
+              boss.update();
+            }
+          });
+        }
+
+        applyDamage(witch, damageAmount = 30) {
+          if (!witch || !witch.canTakeDamage) return;
+
+          console.log(`Enemy hit! Current health: ${witch.health}`);
+          witch.health -= damageAmount;
+          console.log(`New health: ${witch.health}`);
+
+          if (witch.health <= 0 && !witch.isDying) {
+            console.log("Enemy defeated.");
+            this.witchesKilled++; // Increment the witches killed counter
+            console.log(this.witchesKilled);
+            witch.canTakeDamage = false;
+            witch.setVelocity(0, 0);
+            witch.isDying = true;
+            witch.body.enable = false;
+            witch.body.checkCollision.none = true;
+            witch.destroy();
+
+            if (this.witchesKilled >= this.totalWitchesToKill) {
+              console.log("All witches defeated! Transitioning to Level 3...");
+              this.scene.start("Level3"); // Switch to Level 3
+            } else if (this.witchesKilled === 3) {
+              this.createWitches(this, this.witchesPerWave); // Spawn more witches after every wave
+              console.log("Witches killed: " + this.witchesKilled);
+            }
+          } else {
+            witch.canTakeDamage = false;
+            witch.setTint(0xff0000);
+
+            this.time.delayedCall(200, () => {
+              if (witch && !witch.isDying) {
+                witch.clearTint();
+              }
+            });
+
+            this.time.delayedCall(500, () => {
+              if (witch && !witch.isDying) {
+                witch.canTakeDamage = true;
+              }
+            });
+          }
+        }
+
+        playerHit(player, witch) {
+          let currentTime = this.time.now;
+
+          if (
+            currentTime - lastPlayerDamageTime > playerDamageCooldown &&
+            witch.isAttacking
+          ) {
+            lastPlayerDamageTime = currentTime;
+
+            if (witch.isGolem) {
+              applyPlayerDamage.call(this, player, 35); // Use applyPlayerDamage instead of applyDamage
+            } else {
+              applyPlayerDamage.call(this, player, 10);
+            }
+          }
+
+          if (
+            player.anims.getCurrentKey().includes("attack") &&
+            player.anims.isPlaying
+          ) {
+            this.applyDamage(witch);
+          }
+        }
+
+        createWitches(scene, count) {
+          for (var i = 0; i < count; i++) {
+            var cameraBounds = scene.cameras.main.worldView;
+            var x = Phaser.Math.Between(
+              cameraBounds.x,
+              cameraBounds.x + cameraBounds.width,
+            );
+            var y = Phaser.Math.Between(100, 500);
+
+            var witch = scene.witches.create(x, y, "witchIdle");
+
+            witch.setScale(2);
+            witch.health = 80;
+            witch.setBounce(0.2);
+            witch.setCollideWorldBounds(true);
+            witch.setVelocityX(Phaser.Math.Between(-100, 100));
+            witch.anims.play("witchIdle", true);
+
+            const hitboxWidth = 32;
+            const hitboxHeight = 50;
+            const offsetX = (witch.width - hitboxWidth) / 2;
+            const offsetY = (witch.height - hitboxHeight) / 2;
+
+            witch.body.setSize(hitboxWidth, hitboxHeight);
+            witch.body.setOffset(offsetX, offsetY - 15);
+
+            witch.isAttacking = false;
+            witch.lastAttackTime = 0;
+            witch.canTakeDamage = true;
+            witch.isDying = false;
+            witch.isWitch = true;
+
+            witch.on(
+              "animationcomplete-witchAttack",
+              () => {
+                if (!gameOver && witch.active && witch.isAttacking) {
+                  shootMagic(scene, witch);
+                  witch.isAttacking = false;
+                  let newVelocity = Phaser.Math.Between(-100, 100);
+                  witch.setVelocityX(newVelocity);
+                  witch.flipX = newVelocity < 0;
+                  witch.anims.play("witchWalk", true);
+                }
+              },
+              scene,
+            );
+
+            witch.on(
+              "animationcomplete-witchDeath",
+              function () {
+                if (witch.health <= 0 && witch.isDying) {
+                  witch.destroy();
+                  scene.witchesKilled++; // Increment the witches killed counter
+                  if (scene.witchesKilled >= 7) {
+                    console.log(
+                      "All witches defeated! Transitioning to Level 3...",
+                    );
+                    scene.scene.start("Level3"); // Switch to Level 3
+                  } else {
+                    if (scene.witchesKilled % 3 === 0) {
+                      scene.createWitches(scene, 3); // Spawn more witches after every 3 kills
+                    }
+                  }
+                }
+              },
+              scene,
+            );
+          }
+        }
+        shutdown() {
+          // Cleanup function to remove all game objects and reset variables
+          this.enemies.clear(true, true);
+          this.witches && this.witches.clear(true, true);
+          this.bosses && this.bosses.clear(true, true);
+          this.sound.stopAll();
+          this.physics.world.colliders.destroy();
+          player.destroy();
+          platforms.clear(true, true);
+        }
+      }
+
+      class Level3 extends Phaser.Scene {
+        constructor() {
+          super({ key: "Level3" });
+        }
+
+        preload() {
+          this.load.audio(
+            "backgroundMusic",
+            "assets/sounds/backgroundMusic.mp3",
+          );
+          this.load.audio("jumpSound1", "assets/sounds/jump1.wav");
+          this.load.audio("jumpSound2", "assets/sounds/jump2.wav");
+          this.load.audio("jumpSound3", "assets/sounds/jump3.wav");
+          this.load.audio("attackSound1", "assets/sounds/attack1.wav");
+          this.load.audio("attackSound2", "assets/sounds/attack2.wav");
+          this.load.audio("attackSound3", "assets/sounds/attack3.wav");
+          this.load.image("wuste", "assets/Wuste/Wuste1.png");
+          this.load.image("wuste1", "assets/Wuste/Wuste2.png");
+          this.load.image("wuste2", "assets/Wuste/Wuste3.png");
+          this.load.image("ground", "assets/platform.png");
+          this.load.image("mainGround", "assets/bodenWald.png");
+          this.load.spritesheet("dude", "assets/Idle.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeLeft", "assets/IdleLeft.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeRuns", "assets/Run.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeRunsLeft", "assets/RunLeft.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeJumps", "assets/Jump.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeFalls", "assets/Fall.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("dudeJumpsLeft", "assets/JumpLeft.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("attack1", "assets/Attack1.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("attack2", "assets/Attack2.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+          this.load.spritesheet("attack3", "assets/Attack3.png", {
+            frameWidth: 160,
+            frameHeight: 111,
+          });
+
+          this.load.spritesheet("wolfIdle", "assets/Wolf/WolfIdle.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("wolfRuns", "assets/Wolf/WolfRun.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("wolfAttacks", "assets/Wolf/WolfAttack.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("wolfDeath", "assets/Wolf/WolfDeath.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+
+          this.load.spritesheet("witchIdle", "assets/Witch/WitchIdle.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("witchWalk", "assets/Witch/WitchWalk.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("witchAttack", "assets/Witch/WitchThrow.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("witchDeath", "assets/Witch/WitchDeath.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+
+          this.load.spritesheet("golemIdle", "assets/Golem/GolemIdle.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("golemWalk", "assets/Golem/GolemWalk.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("golemAttack", "assets/Golem/GolemAttack.png", {
+            frameWidth: 80,
+            frameHeight: 64,
+          });
+          this.load.spritesheet("golemDeath", "assets/Golem/GolemDeath.png", {
+            frameWidth: 64,
+            frameHeight: 64,
+          });
+        }
+
+        create() {
+          // Create background
+          var backgroundFar = this.add.tileSprite(0, 0, 10000, 1024, "wuste");
+          backgroundFar.setScale(0.7).setOrigin(0, 0);
+          backgroundFar.setScrollFactor(0.5);
+
+          var backgroundMid = this.add.tileSprite(0, 0, 10000, 1024, "wuste1");
+          backgroundMid.setScale(0.7).setOrigin(0, 0);
+          backgroundMid.setScrollFactor(0.75);
+
+          var backgroundNear = this.add.tileSprite(0, 0, 10000, 1024, "wuste2");
+          backgroundNear.setScale(0.7).setOrigin(0, 0);
+          backgroundNear.setScrollFactor(1);
+          this.physics.world.setBounds(0, 0, 8000, 1024);
+
+          // Create platforms
+          platforms = this.physics.add.staticGroup();
+          platforms.create(0, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(400, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(800, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(1200, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(1600, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(2000, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(2400, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(2800, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(3200, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(3600, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(4000, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(4400, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(4800, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(5200, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(5600, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(6000, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(6400, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(6800, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(7200, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(7600, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(8000, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(8400, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(8800, 750, "ground").setScale(0.5).refreshBody();
+          platforms.create(9200, 750, "ground").setScale(0.5).refreshBody();
+
+          platforms.create(75, 520, "ground").setScale(0.3).refreshBody();
+          platforms.create(600, 400, "ground").setScale(0.3).refreshBody();
+          platforms.create(1450, 300, "ground").setScale(0.3).refreshBody();
+          platforms.create(1900, 455, "ground").setScale(0.3).refreshBody();
+          platforms.create(2500, 520, "ground").setScale(0.3).refreshBody();
+
+          this.physics.world.createDebugGraphic();
+
+          // Create player
+          player = this.physics.add.sprite(90, 600, "dude").setScale(1.5);
+          player.setBounce(0);
+          player.setCollideWorldBounds(true);
+          player.health = 100;
+          player.doubleJump = true;
+          player.airAttack = false;
+          player.setOrigin(0.5, 0.5);
+
+          const hitboxWidth = 30;
+          const hitboxHeight = 60;
+          const offsetX = player.width / 2 - hitboxWidth / 2;
+          const offsetY = player.height / 2 - hitboxHeight / 2;
+
+          this.cameras.main.startFollow(player, true);
+          this.cameras.main.setBounds(0, 0, 7600, 600);
+          this.cameras.main.setLerp(0.1, 0.1);
+
+          player.body.setSize(hitboxWidth, hitboxHeight);
+          player.body.setOffset(offsetX, offsetY + 20);
+
+          this.physics.world.createDebugGraphic();
+
+          const debugGraphics = this.add.graphics().setAlpha(0.75);
+          this.physics.world.drawDebug = false;
+          this.physics.world.debugGraphic.clear();
+          this.physics.world.debugGraphic = debugGraphics;
+
+          // Player animations
+          this.anims.create({
+            key: "left",
+            frames: this.anims.generateFrameNumbers("dudeRunsLeft", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 17,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "right",
+            frames: this.anims.generateFrameNumbers("dudeRuns", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 17,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "turnLeft",
+            frames: this.anims.generateFrameNumbers("dudeLeft", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 20,
+          });
+          this.anims.create({
+            key: "turn",
+            frames: this.anims.generateFrameNumbers("dude", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 20,
+          });
+          this.anims.create({
+            key: "jump",
+            frames: this.anims.generateFrameNumbers("dudeJumps", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "jumpLeft",
+            frames: this.anims.generateFrameNumbers("dudeJumpsLeft", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "fall",
+            frames: this.anims.generateFrameNumbers("dudeFalls", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "fallLeft",
+            frames: this.anims.generateFrameNumbers("dudeFallsLeft", {}),
+            frameRate: 10,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "attack1",
+            frames: this.anims.generateFrameNumbers("attack1", {
+              start: 0,
+              end: 4,
+            }),
+            frameRate: 10,
+            repeat: 0,
+            completeDelay: 0,
+          });
+          this.anims.create({
+            key: "attack2",
+            frames: this.anims.generateFrameNumbers("attack2", {
+              start: 0,
+              end: 4,
+            }),
+            frameRate: 10,
+            repeat: 0,
+            completeDelay: 0,
+          });
+          this.anims.create({
+            key: "attack3",
+            frames: this.anims.generateFrameNumbers("attack3", {
+              start: 0,
+              end: 4,
+            }),
+            frameRate: 10,
+            repeat: 0,
+            completeDelay: 0,
+          });
+
+          // Wolf animations
+          this.anims.create({
+            key: "wolfIdle",
+            frames: this.anims.generateFrameNumbers("wolfIdle", {
+              start: 0,
+              end: 12,
+            }),
+            frameRate: 20,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "wolfRuns",
+            frames: this.anims.generateFrameNumbers("wolfRuns", {
+              start: 0,
+              end: 8,
+            }),
+            frameRate: 17,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "wolfAttacks",
+            frames: this.anims.generateFrameNumbers("wolfAttacks", {
+              start: 0,
+              end: 16,
+            }),
+            frameRate: 16,
+            repeat: 0,
+          });
+          this.anims.create({
+            key: "wolfDeath",
+            frames: this.anims.generateFrameNumbers("wolfDeath", {
+              start: 0,
+              end: 18,
+            }),
+            frameRate: 5,
+            repeat: 0,
+          });
+
+          // Witch animations
+          this.anims.create({
+            key: "witchIdle",
+            frames: this.anims.generateFrameNumbers("witchIdle", {
+              start: 0,
+              end: 6,
+            }),
+            frameRate: 10,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "witchWalk",
+            frames: this.anims.generateFrameNumbers("witchWalk", {
+              start: 0,
+              end: 7,
+            }),
+            frameRate: 15,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "witchAttack",
+            frames: this.anims.generateFrameNumbers("witchAttack", {
+              start: 0,
+              end: 17,
+            }),
+            frameRate: 10,
+            repeat: 0,
+          });
+          this.anims.create({
+            key: "witchDeath",
+            frames: this.anims.generateFrameNumbers("witchDeath", {
+              start: 0,
+              end: 11,
+            }),
+            frameRate: 15,
+            repeat: 0,
+          });
+
+          // Golem animations
+          this.anims.create({
+            key: "golemIdle",
+            frames: this.anims.generateFrameNumbers("golemIdle", {
+              start: 0,
+              end: 11,
+            }),
+            frameRate: 10,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "golemWalk",
+            frames: this.anims.generateFrameNumbers("golemWalk", {
+              start: 0,
+              end: 6,
+            }),
+            frameRate: 12,
+            repeat: -1,
+          });
+          this.anims.create({
+            key: "golemAttack",
+            frames: this.anims.generateFrameNumbers("golemAttack", {
+              start: 0,
+              end: 16,
+            }),
+            frameRate: 10,
+            repeat: 0,
+          });
+          this.anims.create({
+            key: "golemDeath",
+            frames: this.anims.generateFrameNumbers("golemDeath", {
+              start: 0,
+              end: 27,
+            }),
+            frameRate: 15,
+            repeat: 0,
+          });
+
+          this.enemiesKilled = 0; // Reset enemiesKilled
+          this.waves = 0; // Reset waves
+          // Initialize Witches
+          this.witches = this.physics.add.group();
+          this.createWitches(this, 3); // Spawn initial 3 witches
+
+          this.physics.add.collider(this.witches, platforms);
+          this.physics.add.overlap(player, this.witches, playerHit, null, this);
+
+          // Initialize Wolves
+          this.enemies = this.physics.add.group();
+
+          this.physics.add.collider(this.enemies, platforms);
+          this.physics.add.overlap(player, this.enemies, playerHit, null, this);
+
+          // Initialize Bosses
+          this.bosses = this.physics.add.group();
+          this.createGolem(1);
+
+          this.physics.add.collider(this.bosses, platforms);
+          this.physics.add.overlap(this.bosses, player, playerHit, null, this); // Ensure golem collides with player
+
+          cursors = this.input.keyboard.createCursorKeys();
+          spaceBar = this.input.keyboard.addKey(
+            Phaser.Input.Keyboard.KeyCodes.SPACE,
+          );
+          player.attackIndex = 1;
+
+          this.physics.add.collider(player, platforms);
+
+          this.healthText = this.add.text(16, 16, "Health: 100", {
+            fontSize: "32px",
+            fill: "#ffffff",
+          });
+          this.healthText.setScrollFactor(0);
+        }
+
+        update() {
+          this.healthText.setText("Health: " + player.health);
+
+          let justDown = Phaser.Input.Keyboard.JustDown(cursors.up);
+          let currentTime = this.time.now;
+
+          if (gameOver) {
+            return;
+          }
+
+          if (!isHealing && currentTime - lastPlayerDamageTime > 10000) {
+            playerHealing.call(this);
+          }
+
+          if (player.body.velocity.x > 0) {
+            this.cameras.main.setFollowOffset(-400, 0);
+          } else if (player.body.velocity.x < 0) {
+            this.cameras.main.setFollowOffset(-400, 0);
+          }
+
+          if (
+            Phaser.Input.Keyboard.JustDown(spaceBar) &&
+            currentTime - lastAttackTime > attackCooldown
+          ) {
+            player.anims.play("attack" + player.attackIndex, true);
+
+            switch (player.attackIndex) {
+              case 1:
+                this.sound.play("attackSound1");
+                break;
+              case 2:
+                this.sound.play("attackSound2");
+                break;
+              case 3:
+                this.sound.play("attackSound3");
+                break;
+            }
+
+            player.attackIndex = (player.attackIndex % 3) + 1;
+
+            this.witches.getChildren().forEach((witch) => {
+              if (
+                Phaser.Math.Distance.Between(
+                  player.x,
+                  player.y,
+                  witch.x,
+                  witch.y,
+                ) < 100 &&
+                witch.canTakeDamage
+              ) {
+                applyDamage.call(this, witch);
+              }
+            });
+
+            lastAttackTime = currentTime;
+
+            return;
+          }
+
+          if (
+            player.anims.isPlaying &&
+            player.anims.getCurrentKey().includes("attack")
+          ) {
+            player.setVelocityX(0);
+            return;
+          }
+
+          if (cursors.left.isDown) {
+            player.setVelocityX(-350);
+            if (player.body.touching.down) {
+              player.anims.play("left", true);
+              player.facingLeft = true;
+            } else if (
+              !player.body.touching.down &&
+              player.body.velocity.y < 0
+            ) {
+              player.anims.play("jumpLeft", true);
+            }
+          } else if (cursors.right.isDown) {
+            player.setVelocityX(350);
+            if (player.body.touching.down) {
+              player.anims.play("right", true);
+              player.facingLeft = false;
+            } else if (
+              !player.body.touching.down &&
+              player.body.velocity.y < 0
+            ) {
+              player.anims.play("jump", true);
+            }
+          } else {
+            player.setVelocityX(0);
+            if (player.body.touching.down) {
+              const idleAnim = player.facingLeft ? "turnLeft" : "turn";
+              player.anims.play(idleAnim, true);
+            }
+          }
+
+          if (player.body.touching.down) {
+            player.doubleJump = true;
+          }
+
+          if (justDown && player.body.touching.down) {
+            player.setVelocityY(-330);
+            const jumpAnim = player.facingLeft ? "jumpLeft" : "jump";
+            player.anims.play(jumpAnim, true);
+
+            const jumpSoundIndex = Phaser.Math.Between(1, 3);
+            this.sound.play("jumpSound" + jumpSoundIndex);
+          } else if (
+            justDown &&
+            player.doubleJump &&
+            !player.body.touching.down
+          ) {
+            player.setVelocityY(-250);
+            const jumpAnim = player.facingLeft ? "jumpLeft" : "jump";
+            player.anims.play(jumpAnim, true);
+
+            const jumpSoundIndex = Phaser.Math.Between(1, 3);
+            this.sound.play("jumpSound" + jumpSoundIndex);
+
+            player.doubleJump = false;
+          }
+
+          // Dash logic
+          if (
+            (cursors.left.isDown && cursors.shift.isDown) ||
+            (cursors.right.isDown && cursors.shift.isDown) ||
+            (cursors.shift.isDown &&
+              Phaser.Input.Keyboard.JustDown(cursors.left)) ||
+            (cursors.shift.isDown &&
+              Phaser.Input.Keyboard.JustDown(cursors.right))
+          ) {
+            var keyPressed = cursors.left.isDown ? "left" : "right";
+
+            // Check if the dash cooldown is over
+            if (currentTime - lastDashTime >= dashCooldown && !isDashing) {
+              isDashing = true;
+
+              // Perform dash with tween animation
+              var dashAmount =
+                keyPressed === "left" ? -dashDistance : dashDistance;
+              this.tweens.add({
+                targets: player,
+                x: player.x + dashAmount,
+                duration: dashDuration,
+                ease: "Power1",
+                onComplete: function () {
+                  isDashing = false;
+                },
+              });
+
+              console.log("dash");
+              lastDashTime = currentTime;
+            }
+          }
+
+          if (cursors.down.isDown && !player.body.touching.down) {
+            player.setVelocityY(400);
+            player.airAttack = true;
+          }
+
+          if (player.airAttack && player.body.touching.down) {
+            player.anims.play("attack1", true);
+            this.sound.play("attackSound1");
+            player.airAttack = false;
+          }
+
+          if (!player.body.touching.down) {
+            const verticalAnim = player.body.velocity.y < 0 ? "jump" : "fall";
+            const directionalAnim = player.facingLeft
+              ? `${verticalAnim}Left`
+              : verticalAnim;
+          }
+
+          this.enemies.children.iterate((enemy) => {
+            if (!enemy || !enemy.body) return;
+            if (Math.abs(player.y - enemy.y) > 200) {
+              this.handleIndependentEnemyMovement(enemy);
+            } else {
+              if (!enemy.isAttacking) {
+                let velocity = 300 * (player.x < enemy.x ? -1 : 1);
+                if (enemy && enemy.body) {
+                  enemy.setVelocityX(velocity);
+                  enemy.flipX = velocity < 0;
+                  enemy.anims.play("wolfRuns", true);
+
+                  if (
+                    Phaser.Math.Distance.Between(
+                      player.x,
+                      player.y,
+                      enemy.x,
+                      enemy.y,
+                    ) < 50
+                  ) {
+                    this.performAttack(enemy);
+                  }
+                }
+              }
+            }
+          });
+
+          this.witches.children.iterate((witch) => {
+            if (!witch || !witch.body) return;
+
+            // Independent movement for witches
+            if (
+              !witch.randomWalkTimer ||
+              witch.randomWalkTimer < this.time.now
+            ) {
+              if (Math.random() < 0.5) {
+                witch.setVelocityX(0);
+                witch.anims.play("witchIdle", true);
+              } else {
+                let randomVelocity = Phaser.Math.Between(-100, 100);
+                witch.setVelocityX(randomVelocity);
+                witch.anims.play("witchWalk", true);
+                witch.flipX = randomVelocity < 0;
+              }
+              witch.randomWalkTimer =
+                this.time.now + Phaser.Math.Between(2000, 5000);
+            }
+          });
+
+          // Call the update method for each golem
+          this.bosses.children.iterate((golem) => {
+            if (golem.update) {
+              golem.update();
+            }
+          });
+        }
+
+        applyPlayerDamage(player, damageAmount) {
+          player.health -= damageAmount;
+          console.log(`Player hit! Current health: ${player.health}`);
+          lastPlayerDamageTime = this.time.now;
+
+          if (player.health <= 0) {
+            player.health = 0;
+            gameOver = true;
+            console.log("Game Over!");
+            this.physics.pause();
+            player.setTint(0xff0000);
+            player.anims.play("turn");
+
+            let gameOverText = this.add.text(
+              this.cameras.main.centerX,
+              this.cameras.main.centerY,
+              "GAME OVER",
+              {
+                fontSize: "64px",
+                fill: "#ff0000",
+              },
+            );
+
+            // Center the text based on its width and height
+            gameOverText.setOrigin(0.5, 0.5);
+
+            // Make the text fixed to the camera
+            gameOverText.setScrollFactor(0);
+
+            player.setVelocity(0, 0);
+            player.body.enable = false;
+          } else {
+            player.setTint(0xff0000);
+            this.time.delayedCall(200, () => {
+              player.clearTint();
+            });
+          }
+
+          if (isHealing) {
+            clearInterval(healingInterval);
+            isHealing = false;
+          }
+        }
+
+        createGolem(count) {
+          for (let i = 0; i < count; i++) {
+            var cameraBounds = this.cameras.main.worldView;
+            var x = 900;
+            var y = 680;
+
+            var golem = this.bosses.create(x, y, "golemIdle");
+
+            golem.setScale(3);
+            golem.health = 500;
+            golem.setBounce(0.2);
+            golem.setCollideWorldBounds(true);
+
+            const hitboxWidth = 40;
+            const hitboxHeight = 45;
+            const offsetX = (golem.width - hitboxWidth) / 2;
+            const offsetY = (golem.height - hitboxHeight) / 2 - 12;
+
+            golem.body.setSize(hitboxWidth, hitboxHeight);
+            golem.body.setOffset(offsetX, offsetY);
+
+            golem.isAttacking = false;
+            golem.lastAttackTime = 0;
+            golem.canTakeDamage = true;
+            golem.isDying = false;
+            golem.isGolem = true;
+
+            // Create golem health text in the scene context
+            const golemHealthText = this.add.text(
+              600,
+              50,
+              "Golem: " + golem.health,
+              {
+                fontSize: "32px",
+                fill: "#ffffff",
+              },
+            );
+            golemHealthText.setScrollFactor(0);
+
+            const spawnEnemies = () => {
+              if (golem.active) {
+                createWitches(this, 3);
+                createEnemies(this, 4);
+              }
+            };
+
+            this.time.addEvent({
+              delay: 15000,
+              callback: spawnEnemies,
+              callbackScope: this,
+              loop: true,
+            });
+
+            const golemPerformAttack = (golem) => {
+              const currentTime = this.time.now;
+              if (
+                !golem.isAttacking &&
+                currentTime - golem.lastAttackTime >= 1500
+              ) {
+                golem.isAttacking = true;
+                golem.lastAttackTime = currentTime;
+                golem.setVelocityX(0);
+                golem.flipX = golem.x < player.x;
+
+                golem.anims.play("golemAttack", true);
+
+                const onComplete = () => {
+                  if (!gameOver && golem.active) {
+                    if (
+                      Phaser.Math.Distance.Between(
+                        player.x,
+                        player.y,
+                        golem.x,
+                        golem.y,
+                      ) < 100
+                    ) {
+                      applyPlayerDamage.call(this, player, 35);
+                    }
+                    const newVelocity = Phaser.Math.Between(-100, 100);
+                    golem.setVelocityX(newVelocity);
+                    golem.flipX = newVelocity < 0;
+                    golem.anims.play("golemWalk", true);
+                    golem.isAttacking = false;
+                  }
+                  golem.off("animationcomplete", onComplete);
+                };
+
+                golem.once("animationcomplete", onComplete);
+              }
+            };
+
+            golem.update = () => {
+              golemHealthText.setText("Golem: " + golem.health);
+              if (golem.health <= 0 && !golem.isDying) {
+                golem.isDying = true;
+                golem.canTakeDamage = false;
+                golem.setVelocity(0, 0);
+                golem.body.enable = false;
+                golem.body.checkCollision.none = true;
+                golem.anims.play("golemDeath", true);
+
+                golem.on("animationcomplete", () => {
+                  golem.destroy();
+                });
+              } else {
+                const distanceToPlayer = Phaser.Math.Distance.Between(
+                  player.x,
+                  player.y,
+                  golem.x,
+                  golem.y,
+                );
+
+                if (distanceToPlayer < 200) {
+                  if (
+                    !golem.isAttacking &&
+                    this.time.now - golem.lastAttackTime > 3000
+                  ) {
+                    golem.setVelocity(0, 0);
+                    golemPerformAttack(golem);
+
+                    golem.once("animationcomplete", () => {
+                      if (!gameOver && golem.active) {
+                        golem.isAttacking = false;
+                        golem.setVelocityX(Phaser.Math.Between(-100, 100));
+                        golem.anims.play("golemWalk", true);
+                      }
+                    });
+                  }
+                } else {
+                  if (!golem.isAttacking) {
+                    const direction = new Phaser.Math.Vector2(
+                      player.x - golem.x,
+                      player.y - golem.y,
+                    ).normalize();
+                    golem.setVelocity(direction.x * 100, 0);
+                    golem.anims.play("golemWalk", true);
+                    golem.flipX = direction.x < 0;
+                  }
+                }
+              }
+            };
+
+            this.bosses.add(golem);
+          }
+        }
+        applyDamage(enemy, damageAmount = 30) {
+          if (!enemy || !enemy.canTakeDamage) return;
+
+          console.log(`Enemy hit! Current health: ${enemy.health}`);
+          enemy.health -= damageAmount;
+          console.log(`New health: ${enemy.health}`);
+
+          if (enemy.health <= 0 && !enemy.isDying) {
+            enemy.canTakeDamage = false;
+            enemy.setVelocity(0, 0);
+            enemy.isDying = true;
+            enemy.body.enable = false;
+            enemy.body.checkCollision.none = true;
+
+            if (enemy.isBoss) {
+              console.log("Boss defeated! Transitioning to Level2...");
+              enemy.anims.play("wolfDeath", true);
+              enemy.on("animationcomplete", () => {
+                enemy.destroy();
+                this.scene.start("Level2");
+              });
+            } else {
+              console.log("Enemy defeated.");
+              enemy.anims.play("wolfDeath", true);
+              enemy.on("animationcomplete", () => {
+                enemy.destroy();
+                enemiesKilled++;
+                if (waves < 3) {
+                  if (enemiesKilled === 2) {
+                    createEnemies(this, 3);
+                    waves++;
+                    console.log("wave: " + waves);
+                    enemiesKilled = 0;
+                  }
+                } else if (waves === 3 && enemiesKilled === 2) {
+                  this.createGolem(1);
+                  waves++;
+                  enemiesKilled = 0; // Reset enemiesKilled after creating golem
+                }
+              });
+            }
+          } else {
+            enemy.canTakeDamage = false;
+            enemy.setTint(0xff0000);
+
+            this.time.delayedCall(200, () => {
+              if (enemy && !enemy.isDying) {
+                enemy.clearTint();
+              }
+            });
+
+            this.time.delayedCall(500, () => {
+              if (enemy && !enemy.isDying) {
+                enemy.canTakeDamage = true;
+              }
+            });
+          }
+        }
+
+        handleIndependentEnemyMovement(enemy) {
+          if (!enemy.randomWalkTimer || enemy.randomWalkTimer < this.time.now) {
+            if (Math.random() < 0.5) {
+              enemy.setVelocityX(0);
+              enemy.anims.play("wolf", true);
+            } else {
+              let randomVelocity = Phaser.Math.Between(-100, 100);
+              enemy.setVelocityX(randomVelocity);
+              enemy.anims.play("wolfRuns", true);
+              enemy.flipX = randomVelocity > 0 ? false : true;
+            }
+            enemy.randomWalkTimer =
+              this.time.now + Phaser.Math.Between(2000, 5000);
+          }
+        }
+
+        performAttack(enemy) {
+          const currentTime = this.time.now;
+          if (
+            !enemy.isAttacking &&
+            currentTime - enemy.lastAttackTime >= 1500
+          ) {
+            enemy.isAttacking = true;
+            enemy.lastAttackTime = currentTime;
+            enemy.setVelocityX(0);
+            enemy.flipX = enemy.x < player.x;
+
+            enemy.anims.play("wolfAttacks", true);
+
+            const onComplete = () => {
+              if (!gameOver && enemy.active) {
+                const newVelocity = Phaser.Math.Between(-100, 100);
+                enemy.setVelocityX(newVelocity);
+                enemy.flipX = newVelocity < 0;
+                enemy.anims.play("wolfRuns", true);
+                enemy.isAttacking = false;
+              }
+              enemy.off("animationcomplete", onComplete);
+            };
+
+            enemy.once("animationcomplete", onComplete);
+          }
+        }
+
+        createEnemies(scene, count) {
+          // Create wolves and witches
+          for (var i = 0; i < count; i++) {
+            var cameraBounds = scene.cameras.main.worldView;
+            var x = Phaser.Math.Between(
+              cameraBounds.x,
+              cameraBounds.x + cameraBounds.width,
+            );
+            var y = Phaser.Math.Between(100, 500);
+
+            // Randomly create either a wolf or a witch
+            if (Phaser.Math.Between(0, 1) === 0) {
+              // Create a wolf
+              var enemy = scene.enemies.create(x, y, "wolfIdle");
+
+              enemy.setScale(2);
+              enemy.health = 80;
+              enemy.setBounce(0.2);
+              enemy.setCollideWorldBounds(true);
+              enemy.setVelocityX(Phaser.Math.Between(-100, 100));
+              enemy.anims.play("wolfIdle", true);
+
+              const hitboxWidth = 32;
+              const hitboxHeight = 50;
+              const offsetX = (enemy.width - hitboxWidth) / 2;
+              const offsetY = (enemy.height - hitboxHeight) / 2;
+
+              enemy.body.setSize(hitboxWidth, hitboxHeight);
+              enemy.body.setOffset(offsetX, offsetY);
+
+              enemy.isAttacking = false;
+              enemy.lastAttackTime = 0;
+              enemy.canTakeDamage = true;
+              enemy.isDying = false;
+
+              enemy.on(
+                "animationcomplete-wolfAttack",
+                () => {
+                  if (!gameOver && enemy.active && enemy.isAttacking) {
+                    enemy.isAttacking = false;
+                    let newVelocity = Phaser.Math.Between(-100, 100);
+                    enemy.setVelocityX(newVelocity);
+                    enemy.flipX = newVelocity < 0;
+                    enemy.anims.play("wolfRuns", true);
+                  }
+                },
+                scene,
+              );
+
+              enemy.on(
+                "animationcomplete-wolfDeath",
+                function () {
+                  if (enemy.health <= 0 && enemy.isDying) {
+                    enemy.destroy();
+                    enemiesKilled++;
+                    if (enemiesKilled % 3 === 0) {
+                      // Spawn more enemies after every 3 kills
+                      createEnemies(scene, 3);
+                    }
+                  }
+                },
+                scene,
+              );
+
+              scene.time.addEvent({
+                delay: Phaser.Math.Between(2000, 3000), // random delay between 2 and 3 seconds
+                callback: () => {
+                  if (!enemy.isAttacking && enemy.active && !gameOver) {
+                    enemy.isAttacking = true;
+                    enemy.anims.play("wolfAttacks", true);
+                  }
+                },
+                loop: true,
+              });
+            } else {
+              // Create a witch
+              this.createWitches(scene, 1);
+            }
+          }
+        }
+
+        createWitches(scene, count) {
+          for (var i = 0; i < count; i++) {
+            var cameraBounds = scene.cameras.main.worldView;
+            var x = Phaser.Math.Between(
+              cameraBounds.x,
+              cameraBounds.x + cameraBounds.width,
+            );
+            var y = Phaser.Math.Between(100, 500);
+
+            var witch = scene.witches.create(x, y, "witchIdle");
+
+            witch.setScale(2);
+            witch.health = 80;
+            witch.setBounce(0.2);
+            witch.setCollideWorldBounds(true);
+            witch.setVelocityX(Phaser.Math.Between(-100, 100));
+            witch.anims.play("witchIdle", true);
+
+            const hitboxWidth = 32;
+            const hitboxHeight = 50;
+            const offsetX = (witch.width - hitboxWidth) / 2;
+            const offsetY = (witch.height - hitboxHeight) / 2;
+
+            witch.body.setSize(hitboxWidth, hitboxHeight);
+            witch.body.setOffset(offsetX, offsetY - 15);
+
+            witch.isAttacking = false;
+            witch.lastAttackTime = 0;
+            witch.canTakeDamage = true;
+            witch.isDying = false;
+
+            witch.on(
+              "animationcomplete-witchAttack",
+              () => {
+                if (!gameOver && witch.active && witch.isAttacking) {
+                  shootMagic(scene, witch);
+                  witch.isAttacking = false;
+                  let newVelocity = Phaser.Math.Between(-100, 100);
+                  witch.setVelocityX(newVelocity);
+                  witch.flipX = newVelocity < 0;
+                  witch.anims.play("witchWalk", true);
+                }
+              },
+              scene,
+            );
+
+            witch.on(
+              "animationcomplete-witchDeath",
+              function () {
+                if (witch.health <= 0 && witch.isDying) {
+                  witch.destroy();
+                  enemiesKilled++;
+                  if (enemiesKilled % 3 === 0) {
+                    // Spawn more witches after every 3 kills
+                    createWitches(scene, 3);
+                  }
+                }
+              },
+              scene,
+            );
+
+            // Set a cooldown for the witch's magic attack
+            function scheduleNextAttack() {
+              scene.time.addEvent({
+                delay: Phaser.Math.Between(1000, 2500), // random delay between 1 and 2.5 seconds
+                callback: () => {
+                  if (witch.active && !gameOver) {
+                    witch.isAttacking = true;
+                    witch.anims.play("witchAttack", true);
+
+                    // Add a delay to shoot magic for 1 second
+                    scene.time.delayedCall(1000, () => {
+                      if (witch && witch.active) {
+                        shootMagic(scene, witch);
+                        witch.isAttacking = false;
+                        witch.anims.play("witchWalk", true);
+
+                        // Schedule the next attack
+                        scheduleNextAttack();
+                      }
+                    });
+                  } else {
+                    // If witch is not active, reschedule the attack
+                    scheduleNextAttack();
+                  }
+                },
+                loop: false,
+              });
+            }
+
+            // Start the attack schedule
+            scheduleNextAttack();
+          }
+        }
+      }
+
+      var config = {
+        type: Phaser.AUTO,
+        width: 2048,
+        height: 1024,
+        physics: {
+          default: "arcade",
+          arcade: {
+            gravity: { y: 300 },
+            debug: false,
+          },
+        },
+        scene: [Level1, Level2, Level3],
+      };
+
+      var game = new Phaser.Game(config);
+    </script>
+  </body>
+</html>

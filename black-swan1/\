@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Making your first Phaser 3 Game - Part 10</title>
+    <script src="//cdn.jsdelivr.net/npm/phaser@3.11.0/dist/phaser.js"></script>
+    <style type="text/css">
+        body {
+            margin: 0;
+        }
+    </style>
+</head>
+
+<body>
+
+    <script type="text/javascript">
+
+        var config = {
+            type: Phaser.AUTO,
+            width: 2048,
+            height: 1024,
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: {y: 300},
+                    debug: true,
+                }
+            },
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        var player;
+        var stars;
+        var bombs;
+        var platforms;
+        var cursors;
+        var score = 0;
+        var gameOver = false;
+        var scoreText;
+
+        var game = new Phaser.Game(config);
+        var attackCooldown = 1000; // Cooldown duration in milliseconds
+        var lastAttackTime = 0; // Tracks the last time an attack was made
+
+
+        function preload() {
+            this.load.image('sky', 'assets/background1.jpeg');
+            this.load.image('ground', 'assets/platform.png');
+            this.load.image('star', 'assets/star.png');
+            this.load.image('bomb', 'assets/bomb.png');
+            this.load.spritesheet('dude', 'assets/Idle.png', {frameWidth: 160, frameHeight: 111});
+            this.load.spritesheet('dudeLeft', 'assets/IdleLeft.png', {frameWidth: 160, frameHeight: 111});
+            this.load.spritesheet('dudeRuns', 'assets/Run.png', {frameWidth: 160, frameHeight: 111});
+            this.load.spritesheet('dudeRunsLeft', 'assets/RunLeft.png', {frameWidth: 160, frameHeight: 111});
+            this.load.spritesheet('dudeJumps', 'assets/Jump.png', {frameWidth: 160, frameHeight: 111});
+            this.load.spritesheet('dudeFalls', 'assets/Fall.png', {frameWidth: 160, frameHeight: 111});
+            this.load.spritesheet('dudeJumpsLeft', 'assets/JumpLeft.png', {frameWidth: 160, frameHeight: 111});
+            this.load.spritesheet('dudeFallsLeft', 'assets/FallLeft.png', {frameWidth: 160, frameHeight: 111});
+            this.load.spritesheet('attack1', 'assets/Attack1.png', {frameWidth: 160, frameHeight: 111});
+            this.load.spritesheet('attack2', 'assets/Attack2.png', {frameWidth: 160, frameHeight: 111});
+            this.load.spritesheet('attack3', 'assets/Attack3.png', {frameWidth: 160, frameHeight: 111});
+
+        }
+
+
+        function create() {
+            // Set the background image and scale it to fit the game width
+            this.add.image(0, 0, 'sky').setScale(6).setOrigin(0, 0);
+
+
+            // Create static platforms
+            platforms = this.physics.add.staticGroup();
+            platforms.create(400, 824, 'ground').setScale(4).refreshBody(); // Main ground
+            platforms.create(600, 400, 'ground'); // Ledge
+            platforms.create(50, 250, 'ground'); // Ledge
+            platforms.create(750, 220, 'ground'); // Ledge
+            platforms.create(75, 520, 'ground'); // Ledge
+
+            // Player setup
+            player = this.physics.add.sprite(90, 50, 'dude').setScale(1.5);
+            player.setBounce(0.2);
+            player.setCollideWorldBounds(true);
+
+            // Set origin to center the sprite visually
+            player.setOrigin(0.5, 0.5);  // Center the sprite image within its coordinate frame
+
+            // Setting custom hitbox size and offset
+            // Adjust these values as needed to fit the visual sprite after scaling
+            const hitboxWidth = 50;
+            const hitboxHeight = 97;
+            const offsetX = (player.width - hitboxWidth * player.scaleX) / 2; // Calculate offset to center the hitbox
+            const offsetY = (player.height - hitboxHeight * player.scaleY) / 2 - 50; // Adjust vertically if necessary
+
+            player.body.setSize(hitboxWidth, hitboxHeight);
+            player.body.setOffset(offsetX, offsetY);
+            // Player animations
+            this.anims.create({
+                key: 'left',
+                frames: this.anims.generateFrameNumbers('dudeRunsLeft', {start: 0, end: 8}),
+                frameRate: 15,
+                repeat: -1
+            });
+            this.anims.create({
+                key: 'right',
+                frames: this.anims.generateFrameNumbers('dudeRuns', {start: 0, end: 8}),
+                frameRate: 15,
+                repeat: -1
+            });
+
+            this.anims.create({
+                key: 'turnLeft',
+                frames: this.anims.generateFrameNumbers('dudeLeft', {start: 0, end: 8}),
+                frameRate: 20
+            })
+
+            this.anims.create({
+                key: 'turn',
+                frames: this.anims.generateFrameNumbers('dude', {start: 0, end: 8}),
+                frameRate: 20
+            });
+
+            // Jump animation with repeating pattern
+            this.anims.create({
+                key: 'jump',
+                frames: this.anims.generateFrameNumbers('dudeJumps', {}),
+                frameRate: 10,
+                repeat: -1
+            });
+
+            this.anims.create({
+                key: 'jumpLeft',
+                frames: this.anims.generateFrameNumbers('dudeJumpsLeft', {}),
+                frameRate: 10,
+                repeat: -1
+            });
+
+            this.anims.create({
+                key: 'fall',
+                frames: this.anims.generateFrameNumbers('dudeFalls', {}),
+                frameRate: 10,
+                repeat: -1
+            });
+
+            this.anims.create({
+                key: 'fallLeft',
+                frames: this.anims.generateFrameNumbers('dudeFallsLeft', {}),
+                frameRate: 10,
+                repeat: -1
+            });
+
+            this.anims.create({
+                key: 'attack1',
+                frames: this.anims.generateFrameNumbers('attack1', {start: 0, end: 4}),
+                frameRate: 10,
+                repeat: 0,
+                completeDelay: 0 // Ensures animation completes fully before being callable again
+            });
+
+            this.anims.create({
+                key: 'attack2',
+                frames: this.anims.generateFrameNumbers('attack2', {start: 0, end: 4}),
+                frameRate: 10,
+                repeat: 0,
+                completeDelay: 0 // Ensures animation completes fully before being callable again
+            });
+
+            this.anims.create({
+                key: 'attack3',
+                frames: this.anims.generateFrameNumbers('attack3', {start: 0, end: 4}),
+                frameRate: 10,
+                repeat: 0,
+                completeDelay: 0 // Ensures animation completes fully before being callable again
+            });
+
+            // Keyboard controls setup
+            cursors = this.input.keyboard.createCursorKeys();
+            spaceBar = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+            player.attackIndex = 1;  // Initialize attack index
+
+            // Collectibles and hazards
+            stars = this.physics.add.group({
+                key: 'star',
+                repeat: 11,
+                setXY: {x: 12, y: 0, stepX: 70}
+            });
+            stars.children.iterate(function (child) {
+                child.setBounceY(Phaser.Math.FloatBetween(0.4, 0.8));
+            });
+            bombs = this.physics.add.group();
+
+            // Score text
+            scoreText = this.add.text(16, 16, 'Score: 0', {fontSize: '32px', fill: '#000'});
+
+            // Collision and overlap checks
+            this.physics.add.collider(player, platforms);
+            this.physics.add.collider(stars, platforms);
+            this.physics.add.collider(bombs, platforms);
+            this.physics.add.overlap(player, stars, collectStar, null, this);
+            this.physics.add.collider(player, bombs, hitBomb, null, this);
+        }
+
+
+
+
+
+
+        function update() {
+            if (gameOver) {
+                return; // Stop updating if the game is over.
+            }
+
+            // Handle attack animation with priority
+            if (Phaser.Input.Keyboard.JustDown(spaceBar)) {
+                player.anims.play('attack' + player.attackIndex, true);
+                player.attackIndex = player.attackIndex % 3 + 1; // Cycle through 1, 2, 3
+                return; // Skip other controls to allow the attack animation to complete
+            }
+
+            // If an attack animation is currently playing, no other action should interrupt it
+            if (player.anims.isPlaying && player.anims.getCurrentKey().includes('attack')) {
+                player.setVelocityX(0); // Optionally, stop player movement during attack
+                return; // Ensure no other movement or animation code runs until attack finishes
+            }
+
+            // Horizontal movement and animations
+            if (cursors.left.isDown) {
+                player.setVelocityX(-250);
+                if (player.body.touching.down) {
+                    player.anims.play('left', true);
+                    player.facingLeft = true; // Indicate that the player is facing left
+                } else if (!player.body.touching.down && player.body.velocity.y < 0) {
+                    player.anims.play('jumpLeft', true);
+                }
+            } else if (cursors.right.isDown) {
+                player.setVelocityX(250);
+                if (player.body.touching.down) {
+                    player.anims.play('right', true);
+                    player.facingLeft = false; // Indicate that the player is facing right
+                } else if (!player.body.touching.down && player.body.velocity.y < 0) {
+                    player.anims.play('jump', true);
+                }
+            } else {
+                player.setVelocityX(0);
+                // Play the appropriate idle animation based on last movement
+                if (player.body.touching.down) {
+                    const idleAnim = player.facingLeft ? 'turnLeft' : 'turn';
+                    player.anims.play(idleAnim, true);
+                }
+            }
+
+            // Jumping logic
+            if (cursors.up.isDown && player.body.touching.down) {
+                player.setVelocityY(-330);
+                const jumpAnim = player.facingLeft ? 'jumpLeft' : 'jump';
+                player.anims.play(jumpAnim, true);
+            }
+
+            // Handle falling animations based on vertical velocity and player's direction
+            if (!player.body.touching.down) {
+                const verticalAnim = player.body.velocity.y < 0 ? 'jump' : 'fall';
+                const directionalAnim = player.facingLeft ? `${verticalAnim}Left` : verticalAnim;
+                player.anims.play(directionalAnim, true);
+            }
+        }
+
+
+
+        function collectStar(player, star) {
+            star.disableBody(true, true);
+
+            //  Add and update the score
+            score += 10;
+            scoreText.setText('Score: ' + score);
+
+            if (stars.countActive(true) === 0) {
+                //  A new batch of stars to collect
+                stars.children.iterate(function (child) {
+
+                    child.enableBody(true, child.x, 0, true, true);
+
+                });
+
+                var x = (player.x < 400) ? Phaser.Math.Between(400, 800) : Phaser.Math.Between(0, 400);
+
+                var bomb = bombs.create(x, 16, 'bomb');
+                bomb.setBounce(1);
+                bomb.setCollideWorldBounds(true);
+                bomb.setVelocity(Phaser.Math.Between(-200, 200), 20);
+                bomb.allowGravity = false;
+
+            }
+        }
+
+        function hitBomb(player, bomb) {
+            this.physics.pause();
+
+            player.setTint(0xff0000);
+
+            player.anims.play('turn');
+
+            gameOver = true;
+        }
+
+    </script>
+
+</body>
+
+</html>
